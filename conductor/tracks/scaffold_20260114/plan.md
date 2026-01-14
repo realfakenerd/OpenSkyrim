@@ -40,7 +40,7 @@
 
 - [ ] Task: Conductor - User Manual Verification 'Documentation Scaffolding' (Protocol in workflow.md)
 
-## Phase 4: Development Environment (Docker & Dev Container)
+## Phase 4: Development Environment (Docker & Dev Container) [checkpoint: 6abe59f]
 
 - [x] Task: Create Dockerfile (634ddd9)
     - [x] Sub-task: Set up base image with Rust and Node.js.
@@ -50,4 +50,4 @@
     - [x] Sub-task: Create `.devcontainer/devcontainer.json` for editor integration.
     - [x] Sub-task: Map volumes and configure workspace permissions.
 
-- [~] Task: Conductor - User Manual Verification 'Development Environment' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Development Environment' (a6c0a1c)
