@@ -1,0 +1,8 @@
+{
+  "track_id": "scaffold_20260114",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-01-14T12:00:00Z",
+  "updated_at": "2026-01-14T12:00:00Z",
+  "description": "Initialize the Monorepo with Turbo Repo, setup the Tauri 2.0 + Bevy 0.18+ workspace, and setup Astro/Starlight documentation."
+}
