@@ -1,0 +1,12 @@
+[package]
+name = "openskyrim_engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bevy.workspace = true
+wgpu.workspace = true
+mlua.workspace = true
+libsql.workspace = true
+rkyv.workspace = true
+memmap2.workspace = true

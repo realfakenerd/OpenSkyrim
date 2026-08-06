@@ -1,0 +1,11 @@
+/target
+*.iso
+*.bin
+extracted_data/
+skyrim_game/
+skyrim_game_files/
+game_data/
+modern_assets/
+transformed_data/
+mod_cache/
+.idea/

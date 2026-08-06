@@ -1,0 +1,7 @@
+[package]
+name = "openskyrim_launcher"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+openskyrim_converter = { path = "../openskyrim_converter" }
