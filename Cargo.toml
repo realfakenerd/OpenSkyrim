@@ -18,7 +18,7 @@ wgpu = "24.0"
 
 # Scripting & Database
 mlua = { version = "0.10", features = ["luau", "luau-jit", "vendored"] }
-libsql = "0.6"
+rusqlite = { version = "0.32", features = ["bundled"] }
 rkyv = "0.8"
 memmap2 = "0.9"
 

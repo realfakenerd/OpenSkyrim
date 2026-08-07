@@ -8,5 +8,5 @@ mesh-tools.workspace = true
 basis-universal.workspace = true
 ddsfile.workspace = true
 nom.workspace = true
-libsql.workspace = true
+rusqlite.workspace = true
 rkyv.workspace = true

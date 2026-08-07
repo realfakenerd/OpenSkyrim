@@ -7,6 +7,6 @@ edition.workspace = true
 bevy.workspace = true
 wgpu.workspace = true
 mlua.workspace = true
-libsql.workspace = true
+rusqlite.workspace = true
 rkyv.workspace = true
 memmap2.workspace = true
