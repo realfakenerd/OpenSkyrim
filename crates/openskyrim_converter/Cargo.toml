@@ -10,3 +10,4 @@ ddsfile.workspace = true
 nom.workspace = true
 rusqlite.workspace = true
 rkyv.workspace = true
+color-eyre.workspace = true

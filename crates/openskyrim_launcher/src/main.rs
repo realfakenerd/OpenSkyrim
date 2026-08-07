@@ -1,6 +1,84 @@
-use openskyrim_converter::AssetPipeline;
+mod components;
+mod handlers;
+mod ui;
+
+use bevy::{prelude::*, window::WindowResolution};
+use crossbeam_channel::Receiver;
+use std::path::PathBuf;
+
+use handlers::*;
+use ui::*;
+
+#[derive(Event, Clone)]
+pub struct ConversionProgressEvent {
+    pub percentage: f32,
+    pub current_file: String,
+    pub finished: bool,
+}
+
+#[derive(Resource)]
+pub struct ConversionChannel {
+    pub receiver: Receiver<ConversionProgressEvent>,
+}
+
+#[derive(Resource)]
+pub struct ConversionStatus {
+    pub progress: f32,
+    pub current_step: String,
+    pub is_complete: bool,
+}
+
+impl Default for ConversionStatus {
+    fn default() -> Self {
+        Self {
+            progress: 0.0,
+            current_step: "Initializing launcher...".into(),
+            is_complete: false,
+        }
+    }
+}
+
+#[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub enum LauncherState {
+    #[default]
+    DetectingGameFiles,
+    FirstRunSetup,
+    ModManager,
+    ConvertingAssets,
+    LaunchingEngine,
+}
+
+#[derive(Resource)]
+pub struct GamePathConfig {
+    pub skyrim_data_path: Option<PathBuf>,
+    pub converted_assets_path: PathBuf,
+}
 
 fn main() {
-    println!("OpenSkyrim Launcher & Setup Wizard started.");
-    AssetPipeline::run();
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "OpenSkyrim Launcher & Mod Manager".into(),
+                resolution: WindowResolution::new(900, 600),
+                resizable: false,
+                ..default()
+            }),
+            ..default()
+        }))
+        .init_state::<LauncherState>()
+        .init_resource::<ConversionStatus>()
+        .insert_resource(GamePathConfig {
+            skyrim_data_path: None,
+            converted_assets_path: "modern_assets".into(),
+        })
+        .add_systems(Startup, (setup_ui, detect_skyrim_and_start_conversion))
+        .add_systems(
+            Update,
+            (
+                update_conversion_progress,
+                handle_play_button_click,
+                handle_mod_drag_and_drop,
+            ),
+        )
+        .run();
 }

@@ -22,11 +22,14 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 rkyv = "0.8"
 memmap2 = "0.9"
 
+# Error Handling
+color-eyre = "0.6.5"
+
 # Converter Dependencies
-mesh-tools = "0.1"
+mesh-tools = "0.4.0"
 basis-universal = "0.3"
 ddsfile = "0.5"
-nom = "8.0"
+nom = "8.0.0"
 
 # Workspace profile optimization
 [profile.dev]

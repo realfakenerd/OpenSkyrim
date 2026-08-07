@@ -5,3 +5,5 @@ edition.workspace = true
 
 [dependencies]
 openskyrim_converter = { path = "../openskyrim_converter" }
+bevy.workspace = true
+crossbeam-channel = "0.5.16"
