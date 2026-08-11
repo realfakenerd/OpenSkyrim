@@ -1,5 +1,5 @@
 [package]
-name = "openskyrim_engine"
+name = "engine"
 version.workspace = true
 edition.workspace = true
 

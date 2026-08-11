@@ -2240,6 +2240,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "converter"
+version = "0.1.0"
+dependencies = [
+ "basis-universal",
+ "color-eyre",
+ "crossbeam-channel",
+ "ddsfile",
+ "flate2",
+ "memmap2",
+ "mesh-tools",
+ "nom",
+ "rkyv",
+ "rusqlite",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2602,6 +2618,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "engine"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "memmap2",
+ "mlua",
+ "rkyv",
+ "rusqlite",
+ "wgpu 24.0.5",
 ]
 
 [[package]]
@@ -3288,7 +3316,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.58.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -3678,6 +3706,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "launcher"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "converter",
+ "crossbeam-channel",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3863,9 +3900,9 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "memmap2"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
 dependencies = [
  "libc",
 ]
@@ -4580,40 +4617,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "openskyrim_converter"
-version = "0.1.0"
-dependencies = [
- "basis-universal",
- "color-eyre",
- "ddsfile",
- "mesh-tools",
- "nom",
- "rkyv",
- "rusqlite",
-]
-
-[[package]]
-name = "openskyrim_engine"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "memmap2",
- "mlua",
- "rkyv",
- "rusqlite",
- "wgpu 24.0.5",
-]
-
-[[package]]
-name = "openskyrim_launcher"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "crossbeam-channel",
- "openskyrim_converter",
-]
 
 [[package]]
 name = "orbclient"
@@ -5429,6 +5432,10 @@ checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
 ]
+
+[[package]]
+name = "shared"
+version = "0.1.0"
 
 [[package]]
 name = "shlex"

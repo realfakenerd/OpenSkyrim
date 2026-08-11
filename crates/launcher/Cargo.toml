@@ -1,9 +1,9 @@
 [package]
-name = "openskyrim_launcher"
+name = "launcher"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-openskyrim_converter = { path = "../openskyrim_converter" }
+converter = { path = "../converter/" }
 bevy.workspace = true
 crossbeam-channel = "0.5.16"

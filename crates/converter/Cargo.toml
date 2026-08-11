@@ -1,5 +1,5 @@
 [package]
-name = "openskyrim_converter"
+name = "converter"
 version.workspace = true
 edition.workspace = true
 
@@ -11,3 +11,6 @@ nom.workspace = true
 rusqlite.workspace = true
 rkyv.workspace = true
 color-eyre.workspace = true
+memmap2 = "0.9.11"
+flate2   = "1.1.9"
+crossbeam-channel  = "0.5.16"
