@@ -1,3 +1,5 @@
+pub mod vmad;
+
 /// 12-byte Object Bounds (OBND subrecord)
 #[derive(Debug)]
 pub struct SubrecordOBND {

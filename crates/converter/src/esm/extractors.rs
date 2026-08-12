@@ -1,5 +1,8 @@
 use crate::esm::{
-    records::record_type::{AlternateTexture, ModelData, SubrecordMODT, SubrecordOBND},
+    records::record_type::{
+        self, AlternateTexture, ModelData, SubrecordMODT, SubrecordOBND,
+        vmad::{VmadSubrecord, parse_vmad},
+    },
     types::{ArchivedRecordData, ArchivedSubRecord},
 };
 use rkyv::{rancor::Panic, to_bytes};
@@ -142,6 +145,12 @@ impl<'a> SubrecordView<'a> {
                 y2: i16::from_le_bytes([d[8], d[9]]),
                 z2: i16::from_le_bytes([d[10], d[11]]),
             })
+    }
+
+    pub fn get_vmad(&self, record_type: &[u8; 4]) -> Option<VmadSubrecord> {
+        self.find(b"VMAD")
+            .and_then(|bytes| parse_vmad(bytes, record_type).ok())
+            .map(|(_, data)| data)
     }
 
     /// Parse Alternate Textures subrecord (e.g. MODS, DMDS, MO2S)

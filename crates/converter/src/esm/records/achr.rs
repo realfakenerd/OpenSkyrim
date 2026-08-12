@@ -13,7 +13,10 @@
 
 use crate::esm::{
     extractors::SubrecordView,
-    records::{EsmRecord, RawRecord},
+    records::{
+        EsmRecord, RawRecord,
+        record_type::vmad::{VmadSubrecord, parse_vmad},
+    },
 };
 
 /// ACHR Header Flags
@@ -94,6 +97,7 @@ pub struct AchrRecord {
     pub ignored_by_sandbox: bool,
     pub scale: Option<f32>,
     pub transform: Option<SubrecordDATA>,
+    pub vmad: Option<VmadSubrecord>,
 }
 
 impl AchrRecord {
@@ -179,6 +183,7 @@ impl EsmRecord for AchrRecord {
                 position: [v[0], v[1], v[2]],
                 rotation: [v[3], v[4], v[5]],
             });
+        let vmad = view.get_vmad(Self::RECORD_TYPE);
 
         Some(Self {
             form_id: raw.form_id,
@@ -201,6 +206,7 @@ impl EsmRecord for AchrRecord {
             ignored_by_sandbox,
             scale,
             transform,
+            vmad,
         })
     }
 }
