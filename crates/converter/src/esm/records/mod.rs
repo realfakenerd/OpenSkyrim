@@ -1,5 +1,6 @@
 pub mod aact;
 pub mod achr;
+pub mod clfm;
 pub mod record_type;
 pub mod tes4;
 pub mod tree;
