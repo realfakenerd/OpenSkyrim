@@ -14,6 +14,12 @@ pub struct RawRecord {
     pub cell_form_id: Option<u32>,
 }
 
+impl RawRecord {
+    pub fn is_deleted(&self) -> bool {
+        self.flags & 0x00000020 != 0
+    }
+}
+
 pub trait EsmRecord: Sized {
     const RECORD_TYPE: &'static [u8; 4];
     fn parse(raw: &RawRecord) -> Option<Self>;

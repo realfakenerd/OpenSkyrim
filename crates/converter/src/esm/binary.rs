@@ -1,23 +1,19 @@
 use crate::esm::{
     extractors::extract_subrecords,
     mmap_reader::EsmReader,
-    types::{GroupHeader, RawRecord, RecordHeader, WorldReference},
+    records::RawRecord,
+    types::{GroupHeader, RecordHeader, WorldReference},
 };
-use color_eyre::{eyre::eyre, Result};
+use color_eyre::{Result, eyre::eyre};
 use flate2::read::ZlibDecoder;
 use nom::{
+    IResult,
     bytes::complete::take,
     number::complete::{le_f32, le_i32, le_u16, le_u32},
-    IResult,
 };
 use std::{io::Read, path::Path};
 
 const FLAG_COMPRESSED: u32 = 0x00040000;
-
-pub trait EsmRecord: Sized {
-    const RECORD_TYPE: &'static [u8; 4];
-    fn parse(raw: &RawRecord) -> Option<Self>;
-}
 
 /// For STAT / MSTT / FURN
 pub struct StaticRecord {

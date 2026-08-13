@@ -1,6 +1,6 @@
 use crate::esm::{
     extractors::{extract_cell_info, extract_land_data, serialize_subrecords},
-    types::RawRecord,
+    records::RawRecord,
 };
 use rusqlite::{Connection, Result, Transaction, params};
 use std::{collections::HashMap, str::from_utf8};

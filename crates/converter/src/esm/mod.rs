@@ -1,7 +1,7 @@
 use crate::esm::{
     binary::parse_plugin_file,
     exporter::{create_tables, export_to_db},
-    types::RawRecord,
+    records::RawRecord,
 };
 use color_eyre::Result;
 use rusqlite::Connection;
