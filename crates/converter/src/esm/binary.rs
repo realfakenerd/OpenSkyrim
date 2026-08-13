@@ -3,12 +3,12 @@ use crate::esm::{
     mmap_reader::EsmReader,
     types::{GroupHeader, RawRecord, RecordHeader, WorldReference},
 };
-use color_eyre::{Result, eyre::eyre};
+use color_eyre::{eyre::eyre, Result};
 use flate2::read::ZlibDecoder;
 use nom::{
-    IResult,
     bytes::complete::take,
     number::complete::{le_f32, le_i32, le_u16, le_u32},
+    IResult,
 };
 use std::{io::Read, path::Path};
 
@@ -100,7 +100,7 @@ pub fn parse_group(
                 if raw_payload.len() < 4 {
                     Vec::new()
                 } else {
-                    let decompressed_size = u32::from_be_bytes([
+                    let decompressed_size = u32::from_le_bytes([
                         raw_payload[0],
                         raw_payload[1],
                         raw_payload[2],
