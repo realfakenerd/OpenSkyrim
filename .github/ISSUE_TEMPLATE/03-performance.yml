@@ -1,0 +1,40 @@
+name: ⚡ Performance & Graphics Optimization
+description: Report slow frame rates, stuttering, memory leaks, or rendering bottlenecks.
+title: "[Perf]: "
+labels: ["performance", "graphics"]
+body:
+  - type: input
+    id: area
+    attributes:
+      label: Subsystem Bottleneck
+      placeholder: e.g., Shadow mapping, VRAM allocation, BSA decompression
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Performance Impact
+      options:
+        - Critical (Unplayable FPS drop or severe stutter)
+        - Major (High VRAM / RAM usage over time)
+        - Minor (Micro-stutters during cell transition)
+        - Informational / Profiling optimization opportunity
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: System & Hardware Details
+      placeholder: CPU model, GPU model, VRAM size, RAM configuration, OS version.
+    validations:
+      required: true
+
+  - type: textarea
+    id: profiling-data
+    attributes:
+      label: Profiling & Benchmark Data
+      description: Attach trace output, flamegraphs, tracy logs, or frame timings if available.
+    validations:
+      required: false

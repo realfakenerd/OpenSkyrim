@@ -1,0 +1,20 @@
+name: 📝 Documentation & Specification Improvement
+description: Suggest improvements, report broken links, or update specs in docs/.
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: input
+    id: doc-file
+    attributes:
+      label: Target Document / File Path
+      placeholder: e.g., docs/specs/engine_architecture.md or README.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description of Needed Change
+      placeholder: Describe what needs to be added, corrected, or rewritten.
+    validations:
+      required: true

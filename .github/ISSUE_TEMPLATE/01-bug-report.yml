@@ -1,0 +1,104 @@
+name: 🐛 Bug Report
+description: Report a bug, crash, rendering glitch, or unexpected engine behavior.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug to **OpenSkyrim**! Please fill out the form below to help us reproduce and fix the issue quickly.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Bug Summary
+      description: A clear, short summary of what went wrong.
+      placeholder: e.g., Crash when loading solitude.esm mesh in vulkan backend
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component / Crate
+      description: Select which component of OpenSkyrim is experiencing the bug.
+      options:
+        - "engine (Core engine runtime)"
+        - "converter (Asset/BSA/NIF/ESP converter)"
+        - "launcher (App UI / Desktop launcher)"
+        - "docs / build system"
+        - "Unknown / General"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows 11
+        - Windows 10
+        - Linux (Ubuntu/Fedora/Arch)
+        - macOS
+        - Android
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: graphics-backend
+    attributes:
+      label: Graphics Backend
+      options:
+        - Vulkan
+        - DirectX 12
+        - Metal
+        - OpenGL / WebGPU fallback
+    validations:
+      required: true
+
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust Compiler Version
+      description: Run `rustc --version` in your terminal.
+      placeholder: e.g., rustc 1.78.0 (9b00956e5 2024-04-29)
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to reproduce the issue.
+      placeholder: |
+        1. Build crate `cargo run -p launcher`
+        2. Load custom BSA file...
+        3. Observe crash at line...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs Actual Behavior
+      description: Describe what you expected to happen versus what actually happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output or Backtrace
+      description: Paste terminal logs or `RUST_BACKTRACE=1` trace output here (no backticks needed).
+      render: shell
+
+  - type: checkboxes
+    id: triage-check
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing GitHub issues to make sure this isn't a duplicate.
+          required: true
+        - label: I am using the latest main branch or release version of OpenSkyrim.
+          required: true

@@ -1,6 +1,6 @@
 use crate::esm::{
     records::record_type::{
-        self, AlternateTexture, ModelData, SubrecordMODT, SubrecordOBND,
+        AlternateTexture, ModelData, SubrecordMODT, SubrecordOBND,
         vmad::{VmadSubrecord, parse_vmad},
     },
     types::{ArchivedRecordData, ArchivedSubRecord},
