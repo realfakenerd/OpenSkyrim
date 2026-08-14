@@ -1,4 +1,7 @@
-use crate::components::{PlayButton, ProgressBarFill, StatusText};
+use crate::{
+    components::{PlayButton, ProgressBarFill, StatusText},
+    game_detection::find_skyrim_data_dir,
+};
 
 use super::{
     ConversionChannel, ConversionProgressEvent, ConversionStatus, GamePathConfig, LauncherState,
@@ -13,17 +16,23 @@ pub fn detect_skyrim_and_start_conversion(
     mut config: ResMut<GamePathConfig>,
     mut status: ResMut<ConversionStatus>,
 ) {
-    let local_skyrim = std::path::Path::new("./skyrim_game/Data/Skyrim.esm");
     let db_exists = std::path::Path::new("./modern_assets/skyrim_world.db").exists();
 
-    if local_skyrim.exists() {
-        config.skyrim_data_path = Some("skyrim_game/Data".into());
+    if let Some(data_dir) = find_skyrim_data_dir() {
+        config.skyrim_data_path = Some(data_dir.clone());
 
         if db_exists {
             status.progress = 1.0;
-            status.current_step = "Assets converted! Ready to play.".into();
+            status.current_step = format!(
+                "Skyrim found at {}. Assets converted! Ready to play.",
+                data_dir.display()
+            );
             status.is_complete = true;
         } else {
+            status.current_step = format!(
+                "Skyrim found at {}. Starting conversion...",
+                data_dir.display()
+            );
             let (tx, rx) = unbounded::<ConversionProgressEvent>();
             commands.insert_resource(ConversionChannel { receiver: rx });
 
@@ -33,7 +42,8 @@ pub fn detect_skyrim_and_start_conversion(
         }
         next_state.set(LauncherState::ModManager);
     } else {
-        status.current_step = "Skyrim game files not found. Drag & drop Skyrim folder here.".into();
+        status.current_step =
+            "Skyrim Special Edition was not found in Steam libraries or local folders.".into();
         next_state.set(LauncherState::FirstRunSetup);
     }
 }
@@ -81,6 +91,19 @@ pub fn update_conversion_progress(
                 text.0 = format!("{} ({:.0}%)", event.current_file, event.percentage * 100.0);
             }
         }
+    }
+}
+
+pub fn sync_status_text(
+    status: Res<ConversionStatus>,
+    mut text_query: Query<&mut Text, With<StatusText>>,
+) {
+    if !status.is_changed() {
+        return;
+    }
+
+    for mut text in text_query.iter_mut() {
+        text.0 = status.current_step.clone();
     }
 }
 

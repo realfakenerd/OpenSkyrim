@@ -37,8 +37,6 @@ use nom::{
     error::Error,
     number::complete::{le_f32, le_i8, le_i16, le_i32, le_u8, le_u16, le_u32},
 };
-use rusqlite::hooks::TransactionOperation::Unknown;
-
 /// VMAD Script Property Value Types
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScriptPropertyValue {

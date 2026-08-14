@@ -170,8 +170,6 @@ pub fn insert_reference(
     let mut pos = [0.0f32; 3];
     let mut rot = [0.0f32; 3];
     let mut scale = 1.0f32;
-    let mut cell_form_id = 0;
-
     for (tag, data) in subs {
         match from_utf8(tag).unwrap_or("") {
             "DATA" if data.len() >= 4 => {
@@ -184,9 +182,6 @@ pub fn insert_reference(
             }
             "XSCL" if data.len() >= 4 => {
                 scale = f32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-            }
-            "CELL" if data.len() >= 4 => {
-                cell_form_id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
             }
             _ => {}
         }

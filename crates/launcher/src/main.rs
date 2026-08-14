@@ -1,4 +1,5 @@
 mod components;
+mod game_detection;
 mod handlers;
 mod ui;
 
@@ -76,6 +77,7 @@ fn main() {
             Update,
             (
                 update_conversion_progress,
+                sync_status_text.after(update_conversion_progress),
                 handle_play_button_click,
                 handle_mod_drag_and_drop,
             ),

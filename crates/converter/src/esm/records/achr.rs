@@ -15,7 +15,7 @@ use crate::esm::{
     extractors::SubrecordView,
     records::{
         EsmRecord, RawRecord,
-        record_type::vmad::{VmadSubrecord, parse_vmad},
+        record_type::vmad::VmadSubrecord,
     },
 };
 

@@ -7,3 +7,6 @@ edition.workspace = true
 converter = { path = "../converter/" }
 bevy.workspace = true
 crossbeam-channel = "0.5.16"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"

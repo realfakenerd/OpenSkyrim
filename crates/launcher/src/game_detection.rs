@@ -1,0 +1,173 @@
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+const SKYRIM_STEAM_APP_ID: &str = "489830";
+const SKYRIM_DEFAULT_INSTALL_DIR: &str = "Skyrim Special Edition";
+
+pub fn find_skyrim_data_dir() -> Option<PathBuf> {
+    local_candidates()
+        .into_iter()
+        .chain(steam_library_paths())
+        .find_map(find_skyrim_in_root)
+}
+
+fn local_candidates() -> [PathBuf; 2] {
+    [PathBuf::from("skyrim_game"), PathBuf::from("game_data")]
+}
+
+fn find_skyrim_in_root(root: PathBuf) -> Option<PathBuf> {
+    let direct_data = root.join("Data");
+    if is_skyrim_data_dir(&direct_data) {
+        return Some(direct_data);
+    }
+
+    let steamapps = root.join("steamapps");
+    let manifest = steamapps.join(format!("appmanifest_{SKYRIM_STEAM_APP_ID}.acf"));
+    let install_dir = fs::read_to_string(manifest)
+        .ok()
+        .and_then(|contents| vdf_value(&contents, "installdir"))
+        .unwrap_or_else(|| SKYRIM_DEFAULT_INSTALL_DIR.to_owned());
+    let data_dir = steamapps.join("common").join(install_dir).join("Data");
+
+    is_skyrim_data_dir(&data_dir).then_some(data_dir)
+}
+
+fn is_skyrim_data_dir(data_dir: &Path) -> bool {
+    data_dir.join("Skyrim.esm").is_file()
+}
+
+fn steam_library_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    for steam_root in steam_install_paths() {
+        paths.push(steam_root.clone());
+
+        let library_file = steam_root.join("steamapps").join("libraryfolders.vdf");
+        if let Ok(contents) = fs::read_to_string(library_file) {
+            paths.extend(vdf_values(&contents, "path").into_iter().map(PathBuf::from));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+#[cfg(windows)]
+fn steam_install_paths() -> Vec<PathBuf> {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+
+    let candidates = [
+        (HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", "InstallPath"),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Valve\Steam",
+            "InstallPath",
+        ),
+    ];
+
+    candidates
+        .into_iter()
+        .filter_map(|(hive, key_path, value_name)| {
+            RegKey::predef(hive)
+                .open_subkey(key_path)
+                .ok()?
+                .get_value::<String, _>(value_name)
+                .ok()
+        })
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn steam_install_paths() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+fn vdf_value(contents: &str, key: &str) -> Option<String> {
+    vdf_values(contents, key).into_iter().next()
+}
+
+fn vdf_values(contents: &str, key: &str) -> Vec<String> {
+    let tokens = quoted_vdf_tokens(contents);
+    tokens
+        .windows(2)
+        .filter(|pair| pair[0].eq_ignore_ascii_case(key))
+        .map(|pair| pair[1].clone())
+        .collect()
+}
+
+fn quoted_vdf_tokens(contents: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut chars = contents.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch != '"' {
+            continue;
+        }
+
+        let mut token = String::new();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '"' => break,
+                '\\' => match chars.peek().copied() {
+                    Some('"') | Some('\\') => token.push(chars.next().unwrap()),
+                    _ => token.push('\\'),
+                },
+                _ => token.push(ch),
+            }
+        }
+        tokens.push(token);
+    }
+
+    tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn reads_all_library_paths_from_modern_steam_vdf() {
+        let contents = r#"
+            "libraryfolders"
+            {
+                "0" { "path" "C:\\Program Files (x86)\\Steam" }
+                "1" { "path" "D:\\SteamLibrary" }
+            }
+        "#;
+
+        assert_eq!(
+            vdf_values(contents, "path"),
+            [r"C:\Program Files (x86)\Steam", r"D:\SteamLibrary"]
+        );
+    }
+
+    #[test]
+    fn uses_manifest_install_directory() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("openskyrim-steam-detection-{unique}"));
+        let steamapps = root.join("steamapps");
+        let data_dir = steamapps.join("common").join("Skyrim SSE").join("Data");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::write(data_dir.join("Skyrim.esm"), []).unwrap();
+        fs::write(
+            steamapps.join("appmanifest_489830.acf"),
+            r#""AppState" { "appid" "489830" "installdir" "Skyrim SSE" }"#,
+        )
+        .unwrap();
+
+        assert_eq!(find_skyrim_in_root(root.clone()), Some(data_dir));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+}
