@@ -125,6 +125,17 @@ impl AssetPipeline {
             .into_iter()
             .filter(|archive| !extension(archive, &["ba2"]) || config.enable_ba2)
             .collect();
+        if !enabled_archives.is_empty() {
+            send(
+                progress_tx,
+                ProgressStage::Extracting,
+                0,
+                enabled_archives.len() as u64,
+                None,
+                "Extracting Skyrim archives",
+            )
+            .await;
+        }
         let archive_parts = staging.join("archive-parts");
         fs::create_dir_all(&archive_parts)?;
         let archive_permits = Arc::new(Semaphore::new(config.io_jobs));
@@ -148,20 +159,23 @@ impl AssetPipeline {
             });
         }
         let mut archive_outcomes = Vec::new();
+        let mut completed_archives = 0u64;
         while let Some(task) = archive_tasks.join_next().await {
-            archive_outcomes.push(task.wrap_err("archive task panicked")??);
-        }
-        archive_outcomes.sort_unstable_by_key(|(index, ..)| *index);
-        for (completed, (_, archive, part, result)) in archive_outcomes.into_iter().enumerate() {
+            let outcome = task.wrap_err("archive task panicked")??;
+            completed_archives += 1;
             send(
                 progress_tx,
                 ProgressStage::Extracting,
-                completed as u64 + 1,
+                completed_archives,
                 enabled_archives.len() as u64,
-                Some(archive.clone()),
+                Some(outcome.1.clone()),
                 "Extracted archive",
             )
             .await;
+            archive_outcomes.push(outcome);
+        }
+        archive_outcomes.sort_unstable_by_key(|(index, ..)| *index);
+        for (_, archive, part, result) in archive_outcomes {
             match result {
                 Ok(entries) => {
                     overlay_directory(&part, &staging.join("vfs"))?;
