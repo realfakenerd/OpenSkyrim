@@ -2,7 +2,13 @@ use color_eyre::{
     Result,
     eyre::{WrapErr, bail, ensure},
 };
-use std::{collections::BTreeSet, fmt::Write as _, fs, path::Path};
+use memmap2::Mmap;
+use std::{
+    collections::BTreeSet,
+    fmt::Write as _,
+    fs::{self, File},
+    path::Path,
+};
 
 const SKYRIM_MAGIC: u32 = 0xFA57_C0DE;
 const OPCODE_ARGS: [usize; 36] = [
@@ -124,8 +130,10 @@ pub struct ScriptConverter;
 impl ScriptConverter {
     pub fn convert_pex_to_luau(input: &Path, output: &Path) -> Result<()> {
         let bytes =
-            fs::read(input).wrap_err_with(|| format!("failed to read {}", input.display()))?;
-        let pex = Self::parse(&bytes)?;
+            File::open(input).wrap_err_with(|| format!("failed to open {}", input.display()))?;
+        let mmap = unsafe { Mmap::map(&bytes) }
+            .wrap_err_with(|| format!("failed to memory-map {}", input.display()))?;
+        let pex = Self::parse(&mmap)?;
         Self::verify(&pex)?;
         let luau = Self::emit_luau(&pex)?;
         mlua::Lua::new()

@@ -66,6 +66,7 @@ pub struct StaticRecord {
     pub editor_id: Option<String>,
     pub model_path: Option<String>,
 }
+
 /// Binary Nom Parser for 24-byte Record Header
 pub fn parse_record_header(input: &[u8]) -> IResult<&[u8], RecordHeader> {
     let (input, type_tag_bytes) = take(4usize)(input)?;

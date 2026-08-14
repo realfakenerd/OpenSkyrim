@@ -1,2 +1,6 @@
+# Uncomment to use kache for ultra-fast incremental rebuilds
+# [build]
+# rustc-wrapper = "kache"
+
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"

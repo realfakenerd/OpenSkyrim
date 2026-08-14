@@ -3,7 +3,14 @@ use color_eyre::{
     eyre::{WrapErr, ensure},
 };
 use ddsfile::Dds;
-use std::{ffi::c_void, fs, io::Cursor, path::Path, sync::Once};
+use memmap2::Mmap;
+use std::{
+    ffi::c_void,
+    fs::{self, File},
+    io::Cursor,
+    path::Path,
+    sync::Once,
+};
 
 const KTX2_IDENTIFIER: &[u8; 12] = b"\xABKTX 20\xBB\r\n\x1A\n";
 const FLAG_THREADED: u32 = 1 << 9;
@@ -47,9 +54,12 @@ impl TextureConverter {
         etc1s_quality: u8,
         uastc_level: u8,
     ) -> Result<()> {
-        let bytes =
-            fs::read(input).wrap_err_with(|| format!("failed to read {}", input.display()))?;
-        let ktx2 = Self::convert_with_options(&bytes, normal_map, etc1s_quality, uastc_level)?;
+        let file =
+            File::open(input).wrap_err_with(|| format!("failed to open {}", input.display()))?;
+        let mmap = unsafe { Mmap::map(&file) }
+            .wrap_err_with(|| format!("failed to memory-map {}", input.display()))?;
+
+        let ktx2 = Self::convert_with_options(&mmap, normal_map, etc1s_quality, uastc_level)?;
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent)?;
         }
