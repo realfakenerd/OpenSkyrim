@@ -37,8 +37,9 @@ use nom::{
     error::Error,
     number::complete::{le_f32, le_i8, le_i16, le_i32, le_u8, le_u16, le_u32},
 };
+use serde::Serialize;
 /// VMAD Script Property Value Types
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum ScriptPropertyValue {
     Object(ScriptObjectProperty),
     WString(String),
@@ -53,14 +54,14 @@ pub enum ScriptPropertyValue {
 }
 
 /// Object Property payload (Type 1 or Type 11 item)
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ScriptObjectProperty {
     pub form_id: u32,
     pub alias_id: u16,
 }
 
 /// A single property entry in a Papyrus script
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ScriptProperty {
     pub name: String,
     pub property_type: u8,
@@ -69,7 +70,7 @@ pub struct ScriptProperty {
 }
 
 /// A Papyrus script attached to a record or quest alias
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ScriptEntry {
     pub name: String,
     pub status: u8, // Present if VMAD version >= 4 (defaults to 0)
@@ -203,11 +204,11 @@ pub fn parse_object_property(
 }
 
 /// Parse a single Property Entry
-pub fn parse_script_property<'a>(
-    input: &'a [u8],
+pub fn parse_script_property(
+    input: &[u8],
     version: i16,
     obj_format: i16,
-) -> IResult<&'a [u8], ScriptProperty> {
+) -> IResult<&[u8], ScriptProperty> {
     let (input, name) = parse_wstring(input)?;
     let (input, property_type) = le_u8(input)?;
     let (input, status) = if version >= 4 {
@@ -302,11 +303,11 @@ pub fn parse_script_property<'a>(
 }
 
 /// Parse a single Script entry
-pub fn parse_script_entry<'a>(
-    input: &'a [u8],
+pub fn parse_script_entry(
+    input: &[u8],
     version: i16,
     obj_format: i16,
-) -> IResult<&'a [u8], ScriptEntry> {
+) -> IResult<&[u8], ScriptEntry> {
     let (input, name) = parse_wstring(input)?;
     let (input, status) = if version >= 4 {
         le_u8(input)?
@@ -577,4 +578,166 @@ pub fn parse_vmad<'a>(input: &'a [u8], record_tag: &[u8; 4]) -> IResult<&'a [u8]
             fragments,
         },
     ))
+}
+
+/// Remaps object FormIDs in the primary VMAD scripts section in place while
+/// preserving record-specific fragment bytes verbatim.
+pub fn remap_primary_form_ids(
+    data: &mut [u8],
+    mut remap: impl FnMut(u32) -> color_eyre::Result<u32>,
+) -> color_eyre::Result<()> {
+    let mut cursor = 0usize;
+    let version = read_i16(data, &mut cursor)?;
+    let object_format = read_i16(data, &mut cursor)?;
+    color_eyre::eyre::ensure!(
+        matches!(object_format, 1 | 2),
+        "unsupported VMAD object format {object_format}"
+    );
+    let script_count = read_u16(data, &mut cursor)?;
+    for _ in 0..script_count {
+        skip_wstring(data, &mut cursor)?;
+        if version >= 4 {
+            take_mut(data, &mut cursor, 1)?;
+        }
+        let property_count = read_u16(data, &mut cursor)?;
+        for _ in 0..property_count {
+            skip_wstring(data, &mut cursor)?;
+            let property_type = take_mut(data, &mut cursor, 1)?[0];
+            if version >= 4 {
+                take_mut(data, &mut cursor, 1)?;
+            }
+            match property_type {
+                1 => remap_object(data, &mut cursor, object_format, &mut remap)?,
+                2 => skip_wstring(data, &mut cursor)?,
+                3 | 4 => {
+                    take_mut(data, &mut cursor, 4)?;
+                }
+                5 => {
+                    take_mut(data, &mut cursor, 1)?;
+                }
+                11 => {
+                    let count = read_u32(data, &mut cursor)?;
+                    for _ in 0..count {
+                        remap_object(data, &mut cursor, object_format, &mut remap)?;
+                    }
+                }
+                12 => {
+                    let count = read_u32(data, &mut cursor)?;
+                    for _ in 0..count {
+                        skip_wstring(data, &mut cursor)?;
+                    }
+                }
+                13 | 14 => {
+                    let count = read_u32(data, &mut cursor)? as usize;
+                    take_mut(
+                        data,
+                        &mut cursor,
+                        count
+                            .checked_mul(4)
+                            .ok_or_else(|| color_eyre::eyre::eyre!("VMAD array size overflow"))?,
+                    )?;
+                }
+                15 => {
+                    let count = read_u32(data, &mut cursor)? as usize;
+                    take_mut(data, &mut cursor, count)?;
+                }
+                other => color_eyre::eyre::bail!("unsupported VMAD property type {other}"),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn remap_object(
+    data: &mut [u8],
+    cursor: &mut usize,
+    object_format: i16,
+    remap: &mut impl FnMut(u32) -> color_eyre::Result<u32>,
+) -> color_eyre::Result<()> {
+    let object = take_mut(data, cursor, 8)?;
+    let offset = if object_format == 1 { 0 } else { 4 };
+    let form_id = u32::from_le_bytes(object[offset..offset + 4].try_into().unwrap());
+    object[offset..offset + 4].copy_from_slice(&remap(form_id)?.to_le_bytes());
+    Ok(())
+}
+
+fn take_mut<'a>(
+    data: &'a mut [u8],
+    cursor: &mut usize,
+    count: usize,
+) -> color_eyre::Result<&'a mut [u8]> {
+    let end = cursor
+        .checked_add(count)
+        .ok_or_else(|| color_eyre::eyre::eyre!("VMAD offset overflow"))?;
+    let value = data
+        .get_mut(*cursor..end)
+        .ok_or_else(|| color_eyre::eyre::eyre!("truncated VMAD at offset {}", *cursor))?;
+    *cursor = end;
+    Ok(value)
+}
+
+fn read_u16(data: &mut [u8], cursor: &mut usize) -> color_eyre::Result<u16> {
+    Ok(u16::from_le_bytes(
+        take_mut(data, cursor, 2)?.try_into().unwrap(),
+    ))
+}
+
+fn read_i16(data: &mut [u8], cursor: &mut usize) -> color_eyre::Result<i16> {
+    Ok(i16::from_le_bytes(
+        take_mut(data, cursor, 2)?.try_into().unwrap(),
+    ))
+}
+
+fn read_u32(data: &mut [u8], cursor: &mut usize) -> color_eyre::Result<u32> {
+    Ok(u32::from_le_bytes(
+        take_mut(data, cursor, 4)?.try_into().unwrap(),
+    ))
+}
+
+fn skip_wstring(data: &mut [u8], cursor: &mut usize) -> color_eyre::Result<()> {
+    let length = read_u16(data, cursor)? as usize;
+    take_mut(data, cursor, length)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod remap_tests {
+    use super::*;
+
+    #[test]
+    fn remaps_scalar_and_array_object_properties_without_touching_fragments() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&5i16.to_le_bytes());
+        bytes.extend_from_slice(&2i16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(b"Test");
+        bytes.push(0);
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&3u16.to_le_bytes());
+        bytes.extend_from_slice(b"One");
+        bytes.extend_from_slice(&[1, 1]);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0x0100_1234u32.to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(b"Many");
+        bytes.extend_from_slice(&[11, 1]);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0x0200_0567u32.to_le_bytes());
+        bytes.extend_from_slice(b"fragment-tail");
+
+        remap_primary_form_ids(&mut bytes, |value| Ok(value + 7)).unwrap();
+        assert!(
+            bytes
+                .windows(4)
+                .any(|value| value == 0x0100_123Bu32.to_le_bytes())
+        );
+        assert!(
+            bytes
+                .windows(4)
+                .any(|value| value == 0x0200_056Eu32.to_le_bytes())
+        );
+        assert!(bytes.ends_with(b"fragment-tail"));
+    }
 }
