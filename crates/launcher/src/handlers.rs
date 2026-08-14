@@ -7,6 +7,9 @@ use super::{
     ConversionChannel, ConversionProgressEvent, ConversionStatus, GamePathConfig, LauncherState,
 };
 use bevy::prelude::*;
+use converter::{
+    AssetPipeline, PipelineConfig, ProgressEvent, ProgressStage, cache::ConversionManifest,
+};
 use crossbeam_channel::{Sender, unbounded};
 use std::thread;
 
@@ -16,12 +19,16 @@ pub fn detect_skyrim_and_start_conversion(
     mut config: ResMut<GamePathConfig>,
     mut status: ResMut<ConversionStatus>,
 ) {
-    let db_exists = std::path::Path::new("./modern_assets/skyrim_world.db").exists();
+    let output_dir = config.converted_assets_path.clone();
+    let conversion_complete = ConversionManifest::load(
+        &output_dir.join("conversion-manifest.json"),
+    )
+    .is_ok_and(|manifest| manifest.complete && output_dir.join("skyrim_world.db").is_file());
 
     if let Some(data_dir) = find_skyrim_data_dir() {
         config.skyrim_data_path = Some(data_dir.clone());
 
-        if db_exists {
+        if conversion_complete {
             status.progress = 1.0;
             status.current_step = format!(
                 "Skyrim found at {}. Assets converted! Ready to play.",
@@ -36,8 +43,9 @@ pub fn detect_skyrim_and_start_conversion(
             let (tx, rx) = unbounded::<ConversionProgressEvent>();
             commands.insert_resource(ConversionChannel { receiver: rx });
 
+            let output_dir = config.converted_assets_path.clone();
             thread::spawn(move || {
-                run_background_converter(tx);
+                run_background_converter(tx, data_dir, output_dir);
             });
         }
         next_state.set(LauncherState::ModManager);
@@ -48,26 +56,101 @@ pub fn detect_skyrim_and_start_conversion(
     }
 }
 
-fn run_background_converter(tx: Sender<ConversionProgressEvent>) {
-    let steps = [
-        "Unpacking BSA archives (Skyrim - Textures0.bsa)...",
-        "Converting textures (.dds -> KTX2 Basis Universal)...",
-        "Converting 3D meshes (.nif -> glTF 2.0)...",
-        "Parsing Skyrim.esm -> skyrim_world.db (SQLite)...",
-        "Transpiling Papyrus scripts (.pex -> Luau)...",
-    ];
-
-    for (i, step) in steps.iter().enumerate() {
-        let percentage = (i as f32 + 1.0) / steps.len() as f32;
-        let is_last = i == steps.len() - 1;
-
-        let _ = tx.send(ConversionProgressEvent {
-            percentage,
-            current_file: (*step).to_string(),
-            finished: is_last,
+fn run_background_converter(
+    tx: Sender<ConversionProgressEvent>,
+    data_dir: std::path::PathBuf,
+    output_dir: std::path::PathBuf,
+) {
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            let _ = tx.send(ConversionProgressEvent {
+                percentage: 0.0,
+                current_file: format!("Failed to start converter: {error}"),
+                finished: false,
+                failed: true,
+            });
+            return;
+        }
+    };
+    runtime.block_on(async move {
+        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<ProgressEvent>(256);
+        let ui_tx = tx.clone();
+        let forwarder = tokio::spawn(async move {
+            while let Some(event) = progress_rx.recv().await {
+                let _ = ui_tx.send(to_launcher_event(event));
+            }
         });
+        let result =
+            AssetPipeline::run_async(PipelineConfig::new(data_dir, output_dir), progress_tx).await;
+        let _ = forwarder.await;
+        match result {
+            Ok(report) => {
+                let (message, percentage) = if report.complete {
+                    (
+                        format!(
+                            "Converted {} assets ({} reused)",
+                            report.converted, report.cache_hits
+                        ),
+                        1.0,
+                    )
+                } else {
+                    (
+                        format!(
+                            "Conversion incomplete: {} input(s) skipped; see conversion-manifest.json",
+                            report.skipped
+                        ),
+                        0.99,
+                    )
+                };
+                let _ = tx.send(ConversionProgressEvent {
+                    percentage,
+                    current_file: message,
+                    finished: report.complete,
+                    failed: !report.complete,
+                });
+            }
+            Err(error) => {
+                let _ = tx.send(ConversionProgressEvent {
+                    percentage: 0.0,
+                    current_file: format!("Asset conversion failed: {error:#}"),
+                    finished: false,
+                    failed: true,
+                });
+            }
+        }
+    });
+}
 
-        thread::sleep(std::time::Duration::from_millis(600));
+fn to_launcher_event(event: ProgressEvent) -> ConversionProgressEvent {
+    let stage_base = match event.stage {
+        ProgressStage::Discovering => 0.0,
+        ProgressStage::Extracting => 0.05,
+        ProgressStage::Database => 0.30,
+        ProgressStage::Textures => 0.50,
+        ProgressStage::Meshes => 0.70,
+        ProgressStage::Scripts => 0.85,
+        ProgressStage::Validating => 0.93,
+        ProgressStage::Publishing => 0.97,
+        ProgressStage::Complete => 1.0,
+    };
+    let stage_width = match event.stage {
+        ProgressStage::Extracting => 0.25,
+        ProgressStage::Database => 0.20,
+        ProgressStage::Textures => 0.20,
+        ProgressStage::Meshes => 0.15,
+        ProgressStage::Scripts => 0.08,
+        ProgressStage::Validating => 0.04,
+        ProgressStage::Publishing => 0.03,
+        _ => 0.0,
+    };
+    ConversionProgressEvent {
+        percentage: (stage_base + event.fraction() * stage_width).clamp(0.0, 1.0),
+        current_file: event.current_file.map_or(event.message.clone(), |path| {
+            format!("{}: {}", event.message, path.display())
+        }),
+        finished: event.stage == ProgressStage::Complete,
+        failed: false,
     }
 }
 
@@ -82,6 +165,7 @@ pub fn update_conversion_progress(
             status.progress = event.percentage;
             status.current_step = event.current_file.clone();
             status.is_complete = event.finished;
+            status.has_failed = event.failed;
 
             for mut node in fill_query.iter_mut() {
                 node.width = Val::Percent(event.percentage * 100.0);

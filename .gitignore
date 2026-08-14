@@ -34,6 +34,7 @@ extracted_data/
 skyrim_game/
 skyrim_game_files/
 modern_assets/
+modern_assets.staging-*/
 transformed_data/
 mod_cache/
 /extracted/

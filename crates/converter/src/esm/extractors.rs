@@ -12,12 +12,26 @@ pub fn extract_subrecords(data: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
     let mut subs = Vec::new();
     let mut curr = data;
 
+    let mut extended_length = None;
     while curr.len() >= 6 {
         let tag = &curr[..4];
         let len = u16::from_le_bytes([curr[4], curr[5]]) as usize;
         curr = &curr[6..];
 
-        let payload_len = len.min(curr.len());
+        if tag == b"XXXX" {
+            if len == 4 && curr.len() >= 4 {
+                extended_length = Some(u32::from_le_bytes(curr[..4].try_into().unwrap()) as usize);
+                curr = &curr[4..];
+            } else {
+                break;
+            }
+            continue;
+        }
+
+        let payload_len = extended_length.take().unwrap_or(len);
+        if payload_len > curr.len() {
+            break;
+        }
         let payload = curr[..payload_len].to_vec();
 
         subs.push((tag.to_vec(), payload));
@@ -28,21 +42,23 @@ pub fn extract_subrecords(data: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
     subs
 }
 
-pub fn extract_land_data(subs: &[(Vec<u8>, Vec<u8>)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+pub fn extract_land_data(subs: &[(Vec<u8>, Vec<u8>)]) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut vhgt = Vec::new();
     let mut vtex = Vec::new();
     let mut vclr = Vec::new();
+    let mut vnml = Vec::new();
 
     for (tag, data) in subs {
         match from_utf8(tag).unwrap_or("") {
             "VHGT" => vhgt = data.clone(),
             "VTEX" => vtex = data.clone(),
             "VCLR" => vclr = data.clone(),
+            "VNML" => vnml = data.clone(),
             _ => {}
         }
     }
 
-    (vhgt, vtex, vclr)
+    (vhgt, vtex, vclr, vnml)
 }
 
 pub fn extract_cell_info(

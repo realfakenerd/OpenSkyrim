@@ -12,6 +12,8 @@ pub struct RawRecord {
     pub flags: u32,
     pub subrecords: Vec<(Vec<u8>, Vec<u8>)>,
     pub cell_form_id: Option<u32>,
+    pub worldspace_form_id: Option<u32>,
+    pub load_order: u32,
 }
 
 impl RawRecord {

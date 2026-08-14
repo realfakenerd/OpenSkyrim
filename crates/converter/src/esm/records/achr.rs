@@ -13,10 +13,7 @@
 
 use crate::esm::{
     extractors::SubrecordView,
-    records::{
-        EsmRecord, RawRecord,
-        record_type::vmad::VmadSubrecord,
-    },
+    records::{EsmRecord, RawRecord, record_type::vmad::VmadSubrecord},
 };
 
 /// ACHR Header Flags

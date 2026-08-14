@@ -15,6 +15,7 @@ pub struct ConversionProgressEvent {
     pub percentage: f32,
     pub current_file: String,
     pub finished: bool,
+    pub failed: bool,
 }
 
 #[derive(Resource)]
@@ -27,6 +28,7 @@ pub struct ConversionStatus {
     pub progress: f32,
     pub current_step: String,
     pub is_complete: bool,
+    pub has_failed: bool,
 }
 
 impl Default for ConversionStatus {
@@ -35,6 +37,7 @@ impl Default for ConversionStatus {
             progress: 0.0,
             current_step: "Initializing launcher...".into(),
             is_complete: false,
+            has_failed: false,
         }
     }
 }
