@@ -98,3 +98,16 @@ The converter pipeline is orchestrated asynchronously using **`tokio`** task con
 - **Non-blocking Concurrency:** Heavy I/O decompression and file transformations execute concurrently using `tokio::spawn` and `tokio::task::spawn_blocking` for CPU-bound transcode tasks (`dds` ➔ `ktx2` and `nif` ➔ `glb`).
 - **Async Progress Reporting:** Sends `ProgressPhase` updates across `tokio::sync::mpsc::UnboundedSender` to the launcher UI or CLI without thread blocking.
 - **Unified Interface:** Exposes `AssetPipeline::run_async(config, progress_tx).await` as the single high-leverage entry point for modernizing game assets.
+
+---
+
+## 5. Asset Layout & Data Integrity Invariants
+
+1. **VFS Path Normalization (`strip_leading_kind`):**
+   - BSA archives and loose mod files use mixed-case conventions (`Textures/`, `Meshes/`, `Scripts/`).
+   - The asset pipeline normalizes the leading folder component case-insensitively to ensure flat target mappings (`textures/`, `meshes/`, `scripts/`) without double-nested subfolders (e.g. preventing `textures/Textures/...`).
+2. **ESM FormID Remapping Isolation (`is_form_id_subrecord`):**
+   - Subrecord remapping during multi-plugin merges is record-type and payload-length aware (`len == 4`).
+   - Prevents unintended integer remapping on text strings (`TES4` `CNAM`/`SNAM`), physics parameters (`TREE` `CNAM`), and RGBA color structs (`CLFM`/`AACT`).
+3. **Strict Little-Endian ESM Binary Parsing:**
+   - All Bethesda ESM multi-byte numeric primitives (integers, floats, FormIDs, and subrecord payloads such as `ACHR` `PDTO`) are parsed as little-endian bytes (`from_le_bytes`).

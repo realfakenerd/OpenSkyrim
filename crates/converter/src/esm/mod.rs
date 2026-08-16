@@ -134,6 +134,36 @@ pub fn read_plugins_txt(path: &Path, data_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(plugins)
 }
 
+/// Determines whether a subrecord within a given parent record type represents
+/// a 32-bit FormID that requires load-order remapping.
+///
+/// This record-aware check ensures that subrecords with shared tag names (such as
+/// `CNAM` or `SNAM`) containing strings (e.g. `TES4` author/description), float
+/// physics arrays (`TREE` trunk flexibility), or RGBA color structures (`CLFM`/`AACT`)
+/// are not inadvertently overwritten as 4-byte FormIDs.
+fn is_form_id_subrecord(record_type: &[u8; 4], tag: &[u8], len: usize) -> bool {
+    if len != 4 || tag.len() < 4 {
+        return false;
+    }
+    let tag_4: &[u8; 4] = tag[..4].try_into().unwrap();
+    match (record_type, tag_4) {
+        (b"TES4" | b"CLFM" | b"AACT", _) => false,
+        (b"TREE", b"CNAM") => false,
+        (b"TREE", b"SNAM" | b"PFIG") => true,
+        (b"WRLD", b"WNAM" | b"CNAM" | b"RNAM" | b"TNAM") => true,
+        (b"CELL", b"XOWN" | b"XGLB" | b"XEZN" | b"XLCN" | b"XLRL") => true,
+        (b"NPC_", b"RNAM" | b"CNAM" | b"INAM" | b"SNAM") => true,
+        (
+            b"REFR" | b"ACHR" | b"ACRE" | b"PGRE" | b"PMIS",
+            b"NAME" | b"XOWN" | b"XGLB" | b"XEZN" | b"XLCN" | b"XLRL",
+        ) => true,
+        (_, b"XOWN" | b"XGLB" | b"XEZN" | b"XLCN" | b"XLRL") => true,
+        _ => false,
+    }
+}
+
+/// Remaps local FormIDs within a record header, parent cell/worldspace references,
+/// and relevant subrecords according to master plugin load-order indices.
 fn remap_record_form_ids(
     record: &mut RawRecord,
     plugin_name: &str,
@@ -162,23 +192,104 @@ fn remap_record_form_ids(
     record.form_id = remap(record.form_id)?;
     record.cell_form_id = record.cell_form_id.map(&remap).transpose()?;
     record.worldspace_form_id = record.worldspace_form_id.map(&remap).transpose()?;
-    const FORM_ID_TAGS: [[u8; 4]; 12] = [
-        *b"NAME", *b"XOWN", *b"XGLB", *b"XEZN", *b"XLCN", *b"XLRL", *b"WNAM", *b"CNAM", *b"TNAM",
-        *b"SNAM", *b"INAM", *b"RNAM",
-    ];
     for (tag, data) in &mut record.subrecords {
         if tag.as_slice() == b"VMAD" {
             records::record_type::vmad::remap_primary_form_ids(data, &remap)?;
             continue;
         }
-        if data.len() >= 4
-            && FORM_ID_TAGS
-                .iter()
-                .any(|candidate| tag.as_slice() == candidate)
-        {
+        if is_form_id_subrecord(&record.record_type, tag, data.len()) {
             let value = u32::from_le_bytes(data[..4].try_into().unwrap());
             data[..4].copy_from_slice(&remap(value)?.to_le_bytes());
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn does_not_corrupt_tes4_author_strings_or_clfm_colors() {
+        let normal_indices = HashMap::from([("skyrim.esm".to_string(), 0)]);
+        let light_indices = HashMap::new();
+
+        let mut tes4 = RawRecord {
+            form_id: 0,
+            record_type: *b"TES4",
+            flags: 0,
+            subrecords: vec![
+                (b"CNAM".to_vec(), b"Bethesda Game Studios\0".to_vec()),
+                (b"SNAM".to_vec(), b"Master description\0".to_vec()),
+            ],
+            cell_form_id: None,
+            worldspace_form_id: None,
+            load_order: 0,
+        };
+        remap_record_form_ids(
+            &mut tes4,
+            "skyrim.esm",
+            &[],
+            &normal_indices,
+            &light_indices,
+        )
+        .unwrap();
+        assert_eq!(tes4.subrecords[0].1, b"Bethesda Game Studios\0");
+        assert_eq!(tes4.subrecords[1].1, b"Master description\0");
+
+        let mut clfm = RawRecord {
+            form_id: 0x00012345,
+            record_type: *b"CLFM",
+            flags: 0,
+            subrecords: vec![(b"CNAM".to_vec(), vec![128, 64, 32, 255])],
+            cell_form_id: None,
+            worldspace_form_id: None,
+            load_order: 0,
+        };
+        remap_record_form_ids(
+            &mut clfm,
+            "skyrim.esm",
+            &[],
+            &normal_indices,
+            &light_indices,
+        )
+        .unwrap();
+        assert_eq!(clfm.subrecords[0].1, vec![128, 64, 32, 255]);
+    }
+
+    #[test]
+    fn remaps_actual_form_id_subrecords() {
+        let normal_indices =
+            HashMap::from([("skyrim.esm".to_string(), 0), ("update.esm".to_string(), 1)]);
+        let light_indices = HashMap::new();
+
+        let mut refr = RawRecord {
+            form_id: 0x00000001,
+            record_type: *b"REFR",
+            flags: 0,
+            subrecords: vec![
+                (b"NAME".to_vec(), 0x00000020u32.to_le_bytes().to_vec()),
+                (b"XOWN".to_vec(), 0x00000030u32.to_le_bytes().to_vec()),
+            ],
+            cell_form_id: None,
+            worldspace_form_id: None,
+            load_order: 1,
+        };
+        remap_record_form_ids(
+            &mut refr,
+            "update.esm",
+            &["skyrim.esm".to_string()],
+            &normal_indices,
+            &light_indices,
+        )
+        .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(refr.subrecords[0].1[..4].try_into().unwrap()),
+            0x00000020
+        );
+        assert_eq!(
+            u32::from_le_bytes(refr.subrecords[1].1[..4].try_into().unwrap()),
+            0x00000030
+        );
+    }
 }

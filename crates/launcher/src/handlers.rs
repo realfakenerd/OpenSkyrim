@@ -178,6 +178,8 @@ pub fn update_conversion_progress(
     }
 }
 
+/// Synchronizes the displayed launcher status text whenever the conversion state changes,
+/// formatting active progress percentages to avoid UI flickering during background conversion.
 pub fn sync_status_text(
     status: Res<ConversionStatus>,
     mut text_query: Query<&mut Text, With<StatusText>>,
@@ -186,8 +188,14 @@ pub fn sync_status_text(
         return;
     }
 
+    let display_text = if status.progress > 0.0 && !status.is_complete && !status.has_failed {
+        format!("{} ({:.0}%)", status.current_step, status.progress * 100.0)
+    } else {
+        status.current_step.clone()
+    };
+
     for mut text in text_query.iter_mut() {
-        text.0 = status.current_step.clone();
+        text.0 = display_text.clone();
     }
 }
 

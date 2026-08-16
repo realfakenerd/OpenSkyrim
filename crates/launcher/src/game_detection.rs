@@ -33,8 +33,23 @@ fn find_skyrim_in_root(root: PathBuf) -> Option<PathBuf> {
     is_skyrim_data_dir(&data_dir).then_some(data_dir)
 }
 
+/// Checks whether a given directory is a valid Skyrim `Data` folder by searching
+/// for `Skyrim.esm` case-insensitively on both Windows and POSIX file systems.
 fn is_skyrim_data_dir(data_dir: &Path) -> bool {
     data_dir.join("Skyrim.esm").is_file()
+        || data_dir.join("skyrim.esm").is_file()
+        || fs::read_dir(data_dir)
+            .ok()
+            .map(|mut entries| {
+                entries.any(|entry| {
+                    entry.ok().is_some_and(|e| {
+                        e.file_name()
+                            .to_string_lossy()
+                            .eq_ignore_ascii_case("skyrim.esm")
+                    })
+                })
+            })
+            .unwrap_or(false)
 }
 
 fn steam_library_paths() -> Vec<PathBuf> {
@@ -84,9 +99,30 @@ fn steam_install_paths() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Discovers Steam installation directories on non-Windows platforms (macOS, native Linux,
+/// Steam Deck, Flatpak, and Snap distributions).
 #[cfg(not(windows))]
 fn steam_install_paths() -> Vec<PathBuf> {
-    Vec::new()
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let mut candidates = Vec::new();
+    if let Some(home) = home {
+        // Linux native, Flatpak & Snap Steam locations
+        candidates.push(home.join(".local/share/Steam"));
+        candidates.push(home.join(".steam/steam"));
+        candidates.push(home.join(".steam/root"));
+        candidates.push(home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"));
+        candidates.push(home.join(".var/app/com.valvesoftware.Steam/.steam/steam"));
+        candidates.push(home.join(".var/app/com.valvesoftware.Steam/data/Steam"));
+        candidates.push(home.join("snap/steam/common/.local/share/Steam"));
+        candidates.push(home.join("snap/steam/common/.steam/steam"));
+
+        // macOS standard Steam location
+        candidates.push(home.join("Library/Application Support/Steam"));
+    }
+    candidates
+        .into_iter()
+        .filter(|path| path.is_dir())
+        .collect()
 }
 
 fn vdf_value(contents: &str, key: &str) -> Option<String> {
@@ -168,6 +204,20 @@ mod tests {
 
         assert_eq!(find_skyrim_in_root(root.clone()), Some(data_dir));
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn detects_case_insensitive_skyrim_esm() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("openskyrim-case-detection-{unique}"));
+        let data_dir = root.join("Data");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::write(data_dir.join("skyrim.esm"), []).unwrap();
+        assert!(is_skyrim_data_dir(&data_dir));
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -552,8 +552,24 @@ fn extension(path: &Path, expected: &[&str]) -> bool {
         })
 }
 
+/// Strips the leading asset kind folder (e.g., "textures", "meshes", "scripts")
+/// from a relative path in a case-insensitive manner.
+///
+/// This avoids creating double-nested output directory structures when processing
+/// assets extracted from BSA archives or loose mod folders with mixed-case naming
+/// (such as `Textures\actors\dragon.dds` or `Meshes\armor\iron.nif`).
 fn strip_leading_kind<'a>(path: &'a Path, kind: &str) -> &'a Path {
-    path.strip_prefix(kind).unwrap_or(path)
+    if let Some(first) = path.components().next()
+        && first
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(kind)
+    {
+        let mut components = path.components();
+        components.next();
+        return components.as_path();
+    }
+    path
 }
 
 fn staging_path(output: &Path) -> PathBuf {
@@ -613,6 +629,26 @@ mod tests {
         assert_eq!(
             strip_leading_kind(Path::new("textures/a/b.dds"), "textures"),
             Path::new("a/b.dds")
+        );
+        assert_eq!(
+            strip_leading_kind(Path::new("Textures/a/b.dds"), "textures"),
+            Path::new("a/b.dds")
+        );
+        assert_eq!(
+            strip_leading_kind(Path::new("TEXTURES/actors/dragon.dds"), "textures"),
+            Path::new("actors/dragon.dds")
+        );
+        assert_eq!(
+            strip_leading_kind(Path::new("Meshes/armor/iron.nif"), "meshes"),
+            Path::new("armor/iron.nif")
+        );
+        assert_eq!(
+            strip_leading_kind(Path::new("Scripts/quest.pex"), "scripts"),
+            Path::new("quest.pex")
+        );
+        assert_eq!(
+            strip_leading_kind(Path::new("loose/sub/file.dds"), "textures"),
+            Path::new("loose/sub/file.dds")
         );
     }
 
