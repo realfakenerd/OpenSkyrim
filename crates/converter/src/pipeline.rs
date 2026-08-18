@@ -19,12 +19,11 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    sync::{Semaphore, mpsc::Sender},
-    task::JoinSet,
+    sync::mpsc::{Sender, unbounded_channel},
+    task::spawn_blocking,
 };
 use walkdir::WalkDir;
 
@@ -138,49 +137,32 @@ impl AssetPipeline {
             )
             .await;
         }
-        let archive_parts = staging.join("archive-parts");
-        fs::create_dir_all(&archive_parts)?;
-        let archive_permits = Arc::new(Semaphore::new(config.io_jobs));
-        let mut archive_tasks = JoinSet::new();
-        for (index, archive) in enabled_archives.iter().cloned().enumerate() {
-            let permit_pool = archive_permits.clone();
-            let part = archive_parts.join(format!("{index:06}"));
-            archive_tasks.spawn(async move {
-                let _permit = permit_pool
-                    .acquire_owned()
-                    .await
-                    .map_err(|_| color_eyre::eyre::eyre!("archive semaphore closed"))?;
-                let archive_for_worker = archive.clone();
-                let part_for_worker = part.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    ArchiveExtractor::extract(&archive_for_worker, &part_for_worker)
-                })
-                .await
-                .wrap_err("archive worker panicked")?;
-                Ok::<_, color_eyre::Report>((index, archive, part, result))
-            });
-        }
-        let mut archive_outcomes = Vec::new();
-        let mut completed_archives = 0u64;
-        while let Some(task) = archive_tasks.join_next().await {
-            let outcome = task.wrap_err("archive task panicked")??;
-            completed_archives += 1;
+
+        let vfs_dir = staging.join("vfs");
+        fs::create_dir_all(&vfs_dir)?;
+
+        for (index, archive) in enabled_archives.iter().enumerate() {
+            let archive_for_worker = archive.clone();
+            let vfs_for_worker = vfs_dir.clone();
+
+            let result = spawn_blocking(move || {
+                ArchiveExtractor::extract(&archive_for_worker, &vfs_for_worker)
+            })
+            .await
+            .wrap_err("archive worker panicked")?;
+
             send(
                 progress_tx,
                 ProgressStage::Extracting,
-                completed_archives,
+                (index + 1) as u64,
                 enabled_archives.len() as u64,
-                Some(outcome.1.clone()),
+                Some(archive.clone()),
                 "Extracted archive",
             )
             .await;
-            archive_outcomes.push(outcome);
-        }
-        archive_outcomes.sort_unstable_by_key(|(index, ..)| *index);
-        for (_, archive, part, result) in archive_outcomes {
+
             match result {
                 Ok(entries) => {
-                    overlay_directory(&part, &staging.join("vfs"))?;
                     report.converted += entries.len() as u64;
                 }
                 Err(error) if !config.fail_fast => {
@@ -195,7 +177,7 @@ impl AssetPipeline {
                 Err(error) => return Err(error),
             }
         }
-        fs::remove_dir_all(&archive_parts)?;
+
         overlay_loose_assets(&config.data_dir, &staging.join("vfs"), &files)?;
 
         let plugins = plugin_paths(config, &files)?;
@@ -316,147 +298,203 @@ impl ConversionBatch<'_> {
             .filter(|path| extension(path, &[source_ext]))
             .cloned()
             .collect();
+
         self.manifest
             .inputs_by_kind
             .insert(source_ext.to_owned(), selected.len() as u64);
-        let semaphore = Arc::new(Semaphore::new(self.config.cpu_jobs));
-        let mut tasks = JoinSet::new();
-        for (index, source) in selected.iter().enumerate() {
-            let relative = source
-                .strip_prefix(self.staging.join("vfs"))
-                .wrap_err("VFS path escaped staging directory")?;
-            let (folder, target_ext) = match source_ext {
-                "dds" => ("textures", "ktx2"),
-                "nif" => ("meshes", "glb"),
-                "pex" => ("scripts", "luau"),
-                _ => unreachable!(),
-            };
-            let mut target_rel = PathBuf::from(folder).join(strip_leading_kind(relative, folder));
-            target_rel.set_extension(target_ext);
-            let target = self.staging.join(&target_rel);
-            let key = relative
-                .to_string_lossy()
-                .replace('\\', "/")
-                .to_ascii_lowercase();
-            let mut hash = hash_file(source)?;
-            if source_ext == "nif" {
-                for dependency in MeshConverter::dependency_paths(source) {
-                    hash.push(':');
-                    hash.push_str(&hash_file(&dependency)?);
-                }
-            }
-            send(
-                self.progress_tx,
-                stage,
-                index as u64,
-                selected.len() as u64,
-                Some(relative.to_path_buf()),
-                "Converting asset",
-            )
-            .await;
-            if let Some(entry) = self
-                .previous
-                .entries
-                .get(&key)
-                .filter(|entry| entry.source_hash == hash)
-            {
-                let old = self.config.output_dir.join(&entry.output);
-                if old.is_file()
-                    && fs::metadata(&old).is_ok_and(|metadata| metadata.len() == entry.output_size)
-                    && hash_file(&old).is_ok_and(|output_hash| output_hash == entry.output_hash)
-                {
-                    if let Some(parent) = target.parent() {
-                        fs::create_dir_all(parent)?;
+
+        if selected.is_empty() {
+            return Ok(());
+        }
+
+        let total_files = selected.len() as u64;
+        let progress_tx = self.progress_tx.clone();
+        let (outcome_tx, mut outcome_rx) = unbounded_channel();
+
+        let staging_vfs = self.staging.join("vfs");
+        let staging_root = self.staging.to_path_buf();
+        let output_dir = self.config.output_dir.clone();
+        let source_kind = source_ext.to_owned();
+        let etc1s_quality = self.config.texture_etc1s_quality;
+        let uastc_level = self.config.texture_uastc_level;
+        let previous_entries = self.previous.entries.clone();
+
+        let rayon_handle = spawn_blocking(move || {
+            use rayon::prelude::*;
+
+            selected
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(index, source)| {
+                    let relative = match source.strip_prefix(&staging_vfs) {
+                        Ok(rel) => rel,
+                        Err(err) => {
+                            let _ = outcome_tx.send((
+                                index,
+                                String::new(),
+                                String::new(),
+                                PathBuf::new(),
+                                source.clone(),
+                                Err(color_eyre::Report::from(err)),
+                                PathBuf::new(),
+                            ));
+                            return;
+                        }
+                    };
+
+                    let (folder, target_ext) = match source_kind.as_str() {
+                        "dds" => ("textures", "ktx2"),
+                        "nif" => ("meshes", "glb"),
+                        "pex" => ("scripts", "luau"),
+                        _ => unreachable!(),
+                    };
+
+                    let mut target_rel =
+                        PathBuf::from(folder).join(strip_leading_kind(relative, folder));
+                    target_rel.set_extension(target_ext);
+                    let target = staging_root.join(&target_rel);
+                    let key = relative
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                        .to_ascii_lowercase();
+
+                    let mut hash = match hash_file(&source) {
+                        Ok(h) => h,
+                        Err(err) => {
+                            let _ = outcome_tx.send((
+                                index,
+                                key,
+                                String::new(),
+                                target_rel,
+                                relative.to_path_buf(),
+                                Err(err),
+                                target,
+                            ));
+                            return;
+                        }
+                    };
+
+                    if source_kind == "nif" {
+                        for dependency in MeshConverter::dependency_paths(&source) {
+                            match hash_file(&dependency) {
+                                Ok(dep_hash) => {
+                                    hash.push(':');
+                                    hash.push_str(&dep_hash);
+                                }
+                                Err(err) => {
+                                    let _ = outcome_tx.send((
+                                        index,
+                                        key,
+                                        hash,
+                                        target_rel,
+                                        relative.to_path_buf(),
+                                        Err(err),
+                                        target,
+                                    ));
+                                    return;
+                                }
+                            }
+                        }
                     }
-                    fs::copy(old, &target)?;
-                    self.manifest.entries.insert(key, entry.clone());
-                    self.report.cache_hits += 1;
-                    self.report.artifacts.push(target_rel);
-                    continue;
-                }
-            }
-            let source_owned = source.clone();
-            let target_owned = target.clone();
-            let source_kind = source_ext.to_owned();
-            let etc1s_quality = self.config.texture_etc1s_quality;
-            let uastc_level = self.config.texture_uastc_level;
-            let permit_pool = semaphore.clone();
-            let relative_owned = relative.to_path_buf();
-            tasks.spawn(async move {
-                let _permit = permit_pool
-                    .acquire_owned()
-                    .await
-                    .map_err(|_| color_eyre::eyre::eyre!("converter semaphore closed"))?;
-                let conversion = tokio::task::spawn_blocking(move || {
+
+                    // Check cache
+                    if let Some(entry) =
+                        previous_entries.get(&key).filter(|e| e.source_hash == hash)
+                    {
+                        let old = output_dir.join(&entry.output);
+                        if old.is_file()
+                            && fs::metadata(&old).is_ok_and(|m| m.len() == entry.output_size)
+                            && hash_file(&old).is_ok_and(|h| h == entry.output_hash)
+                        {
+                            if let Some(parent) = target.parent() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+                            if fs::copy(&old, &target).is_ok() {
+                                let _ = outcome_tx.send((
+                                    index,
+                                    key,
+                                    hash,
+                                    target_rel,
+                                    relative.to_path_buf(),
+                                    Ok(true), // is_cache_hit = true
+                                    target,
+                                ));
+                                return;
+                            };
+                        }
+                    }
+
                     let result = match source_kind.as_str() {
                         "dds" => TextureConverter::convert_dds_to_ktx2_with_options(
-                            &source_owned,
-                            &target_owned,
-                            TextureConverter::is_normal_map(&source_owned),
+                            &source,
+                            &target,
+                            TextureConverter::is_normal_map(&source),
                             etc1s_quality,
                             uastc_level,
                         ),
-                        "nif" => MeshConverter::convert_nif_to_glb(&source_owned, &target_owned),
-                        "pex" => ScriptConverter::convert_pex_to_luau(&source_owned, &target_owned),
+                        "nif" => MeshConverter::convert_nif_to_glb(&source, &target),
+                        "pex" => ScriptConverter::convert_pex_to_luau(&source, &target),
                         _ => unreachable!(),
                     };
-                    (result, target_owned)
-                })
-                .await
-                .wrap_err("converter worker panicked")?;
-                Ok::<_, color_eyre::Report>((
-                    index,
-                    key,
-                    hash,
-                    target_rel,
-                    relative_owned,
-                    conversion,
-                ))
-            });
-        }
 
-        let mut outcomes = Vec::new();
-        while let Some(task) = tasks.join_next().await {
-            outcomes.push(task.wrap_err("converter task panicked")??);
-        }
-        outcomes.sort_unstable_by_key(|(index, ..)| *index);
-        for (completed, (_, key, hash, target_rel, relative, (conversion, target))) in
-            outcomes.into_iter().enumerate()
+                    let _ = outcome_tx.send((
+                        index,
+                        key,
+                        hash,
+                        target_rel,
+                        relative.to_path_buf(),
+                        result.map(|_| false), // is_cache_hit = false
+                        target,
+                    ));
+                });
+        });
+
+        let mut completed = 0u64;
+        while let Some((_, key, hash, target_rel, relative, conversion, target)) =
+            outcome_rx.recv().await
         {
+            completed += 1;
             send(
-                self.progress_tx,
+                &progress_tx,
                 stage,
-                completed as u64 + 1,
-                selected.len() as u64,
+                completed,
+                total_files,
                 Some(relative.clone()),
                 "Converted asset",
             )
             .await;
+
             match conversion {
-                Ok(()) => {
-                    let size = fs::metadata(&target)?.len();
-                    let output_hash = hash_file(&target)?;
-                    self.manifest.entries.insert(
-                        key,
-                        CacheEntry {
-                            source_hash: hash,
-                            output: target_rel.to_string_lossy().replace('\\', "/"),
-                            output_size: size,
-                            output_hash,
-                        },
-                    );
-                    self.report.converted += 1;
+                Ok(is_cache_hit) => {
+                    if is_cache_hit {
+                        if let Some(entry) = self.previous.entries.get(&key) {
+                            self.manifest.entries.insert(key, entry.clone());
+                        }
+                        self.report.cache_hits += 1;
+                    } else {
+                        let size = fs::metadata(&target)?.len();
+                        let output_hash = hash_file(&target)?;
+                        self.manifest.entries.insert(
+                            key,
+                            CacheEntry {
+                                source_hash: hash,
+                                output: target_rel
+                                    .to_string_lossy()
+                                    .into_owned()
+                                    .replace('\\', "/"),
+                                output_size: size,
+                                output_hash,
+                            },
+                        );
+                        self.report.converted += 1;
+                    }
                     self.report.artifacts.push(target_rel);
-                }
-                Err(error) if !self.config.fail_fast => {
-                    self.report.skipped += 1;
-                    let message = format!("{}: {error:#}", relative.display());
-                    self.manifest.failures.insert(key, message.clone());
-                    self.report.warnings.push(message);
                 }
                 Err(error) => return Err(error),
             }
         }
+
+        rayon_handle.await.wrap_err("rayon batch worker panicked")?;
         Ok(())
     }
 }
