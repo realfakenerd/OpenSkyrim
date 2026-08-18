@@ -5,6 +5,7 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
   RUSTUP_TOOLCHAIN: stable
+  RUSTFLAGS: "-C debuginfo=0"
 
 on:
   push:
@@ -64,7 +65,27 @@ jobs:
     outputs:
       check_rust: ${{ steps.filter.outputs.check_rust }}
 
-  check_rust:
+  format:
+    needs:
+      - orchestrate
+    if: needs.orchestrate.outputs.check_rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Install Rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+  check_and_test:
     needs:
       - orchestrate
     if: needs.orchestrate.outputs.check_rust == 'true'
@@ -89,13 +110,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy
+
+      - name: Set up mold linker
+        uses: rui314/setup-mold@v1
 
       - name: Setup kache compiler cache
         uses: kunobi-ninja/kache-action@v1
-
-      - name: Format check
-        run: cargo fmt --all -- --check
 
       - name: Clippy check
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -111,7 +132,8 @@ jobs:
   tests_pass:
     needs:
       - orchestrate
-      - check_rust
+      - format
+      - check_and_test
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -129,9 +151,12 @@ jobs:
           }
 
           check_result "orchestrate" "$RESULT_ORCHESTRATE"
-          check_result "check_rust" "$RESULT_CHECK_RUST"
+          check_result "format" "$RESULT_FORMAT"
+          check_result "check_and_test" "$RESULT_CHECK_AND_TEST"
 
           exit $EXIT_CODE
         env:
           RESULT_ORCHESTRATE: ${{ needs.orchestrate.result }}
-          RESULT_CHECK_RUST: ${{ needs.check_rust.result }}
+          RESULT_FORMAT: ${{ needs.format.result }}
+          RESULT_CHECK_AND_TEST: ${{ needs.check_and_test.result }}
+  
