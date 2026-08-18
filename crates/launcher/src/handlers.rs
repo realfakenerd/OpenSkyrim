@@ -194,10 +194,11 @@ pub fn update_conversion_progress(
 }
 
 pub fn sync_status_text(
+    channel: Option<Res<ConversionChannel>>,
     status: Res<ConversionStatus>,
     mut text_query: Query<&mut Text, With<StatusText>>,
 ) {
-    if !status.is_changed() {
+    if channel.is_some() || !status.is_changed() {
         return;
     }
 
