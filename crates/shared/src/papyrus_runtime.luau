@@ -78,8 +78,14 @@ end
 function Runtime:cast(value, type_name)
     local normalized = string.lower(type_name or "")
     if normalized == "int" or normalized == "integer" then
+        if type(value) == "boolean" then
+            return value and 1 or 0
+        end
         return math.floor(tonumber(value) or 0)
     elseif normalized == "float" then
+        if type(value) == "boolean" then
+            return value and 1.0 or 0.0
+        end
         return tonumber(value) or 0.0
     elseif normalized == "bool" or normalized == "boolean" then
         return not not value
