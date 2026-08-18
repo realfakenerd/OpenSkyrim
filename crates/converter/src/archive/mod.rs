@@ -5,6 +5,8 @@ use color_eyre::{
     Result,
     eyre::{WrapErr, bail},
 };
+use memmap2::Mmap;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -32,32 +34,63 @@ impl ArchiveExtractor {
             .wrap_err_with(|| format!("failed to open archive {}", archive_path.display()))?;
         // SAFETY: the file remains open and the mapping is read-only for the duration
         // of parsing. No process-local code mutates the archive while it is mapped.
-        let bytes = unsafe { memmap2::Mmap::map(&file) }
+        let bytes = unsafe { Mmap::map(&file) }
             .wrap_err_with(|| format!("failed to map archive {}", archive_path.display()))?;
-        let entries = match bytes.get(..4) {
-            Some(b"BSA\0") => bsa::read_entries(&bytes)?,
-            Some(b"BTDX") => ba2::read_entries(&bytes)?,
-            _ => bail!("unsupported archive magic in {}", archive_path.display()),
-        };
 
-        let mut extracted = Vec::with_capacity(entries.len());
-        for (name, data) in entries {
-            let relative = safe_relative_path(&name)?;
-            let destination = output_root.join(&relative);
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent)?;
+        match bytes.get(..4) {
+            Some(b"BSA\0") => {
+                let entries = bsa::iter_raw_entries(&bytes)?;
+                entries
+                    .into_par_iter()
+                    .map(|entry| {
+                        let relative = safe_relative_path(&entry.name)?;
+                        let destination = output_root.join(&relative);
+                        if let Some(parent) = destination.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        let data = entry.decompress()?;
+                        let bytes_written = data.len() as u64;
+
+                        atomic_write(&destination, &data).wrap_err_with(|| {
+                            format!("failed to extract {}", destination.display())
+                        })?;
+
+                        Ok(ExtractedFile {
+                            path: relative,
+                            bytes_written,
+                        })
+                    })
+                    .collect()
             }
-            atomic_write(&destination, &data)
-                .wrap_err_with(|| format!("failed to extract {}", destination.display()))?;
-            extracted.push(ExtractedFile {
-                path: relative,
-                bytes_written: data.len() as u64,
-            });
+            Some(b"BTDX") => {
+                let entries = ba2::read_entries(&bytes)?;
+                entries
+                    .into_par_iter()
+                    .map(|(name, data)| {
+                        let relative = safe_relative_path(&name)?;
+                        let destination = output_root.join(&relative);
+                        if let Some(parent) = destination.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        let bytes_written = data.len() as u64;
+
+                        atomic_write(&destination, &data).wrap_err_with(|| {
+                            format!("failed to extract {}", destination.display())
+                        })?;
+
+                        Ok(ExtractedFile {
+                            path: relative,
+                            bytes_written,
+                        })
+                    })
+                    .collect()
+            }
+            _ => bail!("unsupported archive magic in {}", archive_path.display()),
         }
-        Ok(extracted)
     }
 }
 
+/// Atomically writes data to a file, ensuring the destination is replaced atomically.
 fn atomic_write(destination: &Path, data: &[u8]) -> Result<()> {
     let file_name = destination
         .file_name()
@@ -76,6 +109,8 @@ fn atomic_write(destination: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Converts an archive-relative path to a safe, relative path, ensuring it does not contain
+/// absolute paths or drive letters.
 pub(crate) fn safe_relative_path(name: &str) -> Result<PathBuf> {
     let normalized = name.replace('\\', "/");
     let path = Path::new(&normalized);

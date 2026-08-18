@@ -17,7 +17,26 @@ struct FileRecord {
     offset: u32,
 }
 
-pub(crate) fn read_entries(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+pub struct BsaRawEntry<'a> {
+    pub name: String,
+    pub payload: &'a [u8],
+    pub version: u32,
+    pub is_compressed: bool,
+}
+
+impl<'a> BsaRawEntry<'a> {
+    pub fn decompress(&self) -> Result<Vec<u8>> {
+        if self.is_compressed {
+            decompress(self.payload, self.version)
+        } else {
+            Ok(self.payload.to_vec())
+        }
+    }
+}
+
+// Reads BSA metadata table only
+// Payloads remain lightweight slices into the mmap
+pub(crate) fn iter_raw_entries<'a>(bytes: &'a [u8]) -> Result<Vec<BsaRawEntry<'a>>> {
     ensure!(bytes.len() >= 36, "truncated BSA header");
     ensure!(&bytes[..4] == b"BSA\0", "invalid BSA magic");
     let version = u32_at(bytes, 4)?;
@@ -121,15 +140,16 @@ pub(crate) fn read_entries(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
                 );
                 payload = &payload[embedded_len + 1..];
             }
-            let compressed = (archive_flags & ARCHIVE_COMPRESSED != 0)
+
+            let is_compressed = (archive_flags & ARCHIVE_COMPRESSED != 0)
                 ^ (record.size_flags & FILE_COMPRESSION_TOGGLE != 0);
-            let data = if compressed {
-                decompress(payload, version)
-                    .wrap_err_with(|| format!("failed to decompress {full_name}"))?
-            } else {
-                payload.to_vec()
-            };
-            Ok((full_name, data))
+
+            Ok(BsaRawEntry {
+                name: full_name,
+                payload,
+                version,
+                is_compressed,
+            })
         })
         .collect()
 }
@@ -210,11 +230,11 @@ mod tests {
         bytes[cursor..cursor + name.len()].copy_from_slice(name);
         bytes.extend_from_slice(payload);
 
-        let entries = read_entries(&bytes).unwrap();
-        assert_eq!(
-            entries,
-            vec![("scripts/hello.pex".into(), payload.to_vec())]
-        );
+        let entries = iter_raw_entries(&bytes).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "scripts/hello.pex");
+        assert_eq!(entries[0].payload, payload);
+        assert_eq!(entries[0].decompress().unwrap(), payload);
     }
 
     #[test]

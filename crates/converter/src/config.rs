@@ -22,7 +22,7 @@ impl PipelineConfig {
             output_dir: output_dir.into(),
             plugins_file: None,
             cpu_jobs: std::thread::available_parallelism().map_or(1, usize::from),
-            io_jobs: 4,
+            io_jobs: 2,
             enable_ba2: true,
             fail_fast: false,
             texture_etc1s_quality: 192,
