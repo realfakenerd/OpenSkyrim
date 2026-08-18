@@ -1,10 +1,9 @@
+use super::{
+    ConversionChannel, ConversionProgressEvent, ConversionStatus, GamePathConfig, LauncherState,
+};
 use crate::{
     components::{PlayButton, ProgressBarFill, StatusText},
     game_detection::find_skyrim_data_dir,
-};
-
-use super::{
-    ConversionChannel, ConversionProgressEvent, ConversionStatus, GamePathConfig, LauncherState,
 };
 use bevy::prelude::*;
 use converter::{
