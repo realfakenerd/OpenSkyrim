@@ -19,6 +19,7 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
+    suppress_caught_nif_parser_panics();
     let cli = parse_cli(std::env::args_os().skip(1).collect())?;
     let mut config = PipelineConfig::new(cli.data, cli.output);
     config.fail_fast = cli.fail_fast;
@@ -63,6 +64,18 @@ async fn main() -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn suppress_caught_nif_parser_panics() {
+    let report_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let is_nif_parser = info
+            .location()
+            .is_some_and(|location| location.file().contains("project-wormhole-nif-"));
+        if !is_nif_parser {
+            report_panic(info);
+        }
+    }));
 }
 
 fn parse_cli(args: Vec<OsString>) -> Result<Cli> {

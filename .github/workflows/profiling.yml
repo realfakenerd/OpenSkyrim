@@ -1,0 +1,25 @@
+name: GPU Profiling
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Seconds per synthetic repetition
+        default: "120"
+        required: true
+
+jobs:
+  synthetic-baseline:
+    runs-on: [self-hosted, windows, gpu]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Profile synthetic renderer three times
+        shell: pwsh
+        run: ./scripts/phase2-profile.ps1 -Scenario synthetic -Repetitions 3 -DurationSeconds ${{ inputs.duration_seconds }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase2-profiling-${{ github.sha }}
+          path: target/profiling
+          retention-days: 30

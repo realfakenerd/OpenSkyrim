@@ -329,10 +329,9 @@ pub fn build_cfg(function: &Function) -> Result<ControlFlowGraph> {
         );
         return Ok(ControlFlowGraph { blocks: vec![] });
     }
-    ensure!(
-        !function.instructions.is_empty(),
-        "non-native function has no bytecode"
-    );
+    if function.instructions.is_empty() {
+        return Ok(ControlFlowGraph { blocks: vec![] });
+    }
     let len = function.instructions.len();
     let mut leaders = BTreeSet::from([0usize]);
     for (ip, instruction) in function.instructions.iter().enumerate() {
@@ -343,10 +342,12 @@ pub fn build_cfg(function: &Function) -> Result<ControlFlowGraph> {
             };
             let target = ip as isize + offset as isize;
             ensure!(
-                (0..len as isize).contains(&target),
+                (0..=len as isize).contains(&target),
                 "jump at {ip} targets {target}"
             );
-            leaders.insert(target as usize);
+            if target < len as isize {
+                leaders.insert(target as usize);
+            }
             if ip + 1 < len {
                 leaders.insert(ip + 1);
             }
@@ -597,6 +598,11 @@ fn emit_function(out: &mut String, state: &State, function: &Function) -> Result
         writeln!(out, "end")?;
         return Ok(());
     }
+    if function.instructions.is_empty() {
+        writeln!(out, "    return nil")?;
+        writeln!(out, "end")?;
+        return Ok(());
+    }
     let ir = lower_to_ir(function)?;
     writeln!(out, "    local __v, __locals, __types = {{}}, {{}}, {{}}")?;
     for (index, param) in function.params.iter().enumerate() {
@@ -637,6 +643,11 @@ fn emit_function(out: &mut String, state: &State, function: &Function) -> Result
         )?;
         emit_instruction(out, ip, &ir_instruction.instruction)?;
     }
+    writeln!(
+        out,
+        "        elseif __pc == {} then return nil",
+        ir.instructions.len()
+    )?;
     writeln!(
         out,
         "        else error(\"invalid Papyrus program counter: \" .. tostring(__pc)) end"
@@ -1035,5 +1046,28 @@ mod tests {
         };
         let cfg = build_cfg(&function).unwrap();
         assert_eq!(cfg.blocks[0].successors, vec![1, 2]);
+    }
+
+    #[test]
+    fn accepts_empty_functions_and_jumps_to_function_exit() {
+        let empty = Function {
+            name: "empty".into(),
+            return_type: "None".into(),
+            flags: 0,
+            params: vec![],
+            locals: vec![],
+            instructions: vec![],
+        };
+        assert!(build_cfg(&empty).unwrap().blocks.is_empty());
+
+        let jumping = Function {
+            instructions: vec![Instruction {
+                opcode: 20,
+                args: vec![Value::Integer(1)],
+                varargs: vec![],
+            }],
+            ..empty
+        };
+        assert_eq!(build_cfg(&jumping).unwrap().blocks[0].successors, vec![1]);
     }
 }

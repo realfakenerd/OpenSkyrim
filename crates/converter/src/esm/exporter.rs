@@ -12,7 +12,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"PRAGMA foreign_keys = ON;
          CREATE TABLE IF NOT EXISTS schema_info (version INTEGER NOT NULL);
-         INSERT INTO schema_info(version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_info);
+         INSERT INTO schema_info(version) SELECT 3 WHERE NOT EXISTS (SELECT 1 FROM schema_info);
          CREATE TABLE IF NOT EXISTS plugins (
              id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, priority INTEGER NOT NULL, checksum BLOB NOT NULL
          );
@@ -45,7 +45,11 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
              cell_id INTEGER PRIMARY KEY, heightmap BLOB NOT NULL, vtex BLOB, vclr BLOB, normals BLOB
          );
          CREATE TABLE IF NOT EXISTS statics (
-             id INTEGER PRIMARY KEY, editor_id TEXT, model_path TEXT, flags INTEGER NOT NULL
+             id INTEGER PRIMARY KEY, editor_id TEXT, model_path TEXT, flags INTEGER NOT NULL,
+             bounds_min_x REAL NOT NULL DEFAULT -64, bounds_min_y REAL NOT NULL DEFAULT -64,
+             bounds_min_z REAL NOT NULL DEFAULT -64, bounds_max_x REAL NOT NULL DEFAULT 64,
+             bounds_max_y REAL NOT NULL DEFAULT 64, bounds_max_z REAL NOT NULL DEFAULT 64,
+             bounds_valid INTEGER NOT NULL DEFAULT 0
          );
          CREATE INDEX IF NOT EXISTS idx_statics_editor_id ON statics(editor_id);
          CREATE TABLE IF NOT EXISTS npcs (
@@ -56,6 +60,20 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
          CREATE TABLE IF NOT EXISTS lod (
              cell_id INTEGER NOT NULL, lod_level INTEGER NOT NULL, mesh_data BLOB NOT NULL,
              PRIMARY KEY (cell_id, lod_level)
+         );
+         CREATE TABLE IF NOT EXISTS waters (
+             id INTEGER PRIMARY KEY, editor_id TEXT, opacity INTEGER, flags INTEGER NOT NULL,
+             shallow_color INTEGER, deep_color INTEGER, reflection_color INTEGER,
+             flow_normal_path TEXT, data BLOB NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS texture_sets (
+             id INTEGER PRIMARY KEY, editor_id TEXT, diffuse_path TEXT, normal_path TEXT,
+             glow_path TEXT, height_path TEXT, environment_path TEXT, mask_path TEXT,
+             specular_path TEXT, detail_path TEXT
+         );
+         CREATE TABLE IF NOT EXISTS landscape_textures (
+             id INTEGER PRIMARY KEY, editor_id TEXT, texture_set_id INTEGER,
+             material_type INTEGER, friction REAL, restitution REAL
          );
          CREATE TABLE IF NOT EXISTS scripts (
              form_id INTEGER NOT NULL, script_name TEXT NOT NULL,
@@ -167,10 +185,64 @@ pub fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Resu
                     params![form_id, view.get_string(b"EDID"), view.get_string(b"FULL"), view.get_form_id(b"RNAM"), view.get_form_id(b"CNAM"), record.flags],
                 )?;
             }
+            "WATR" => {
+                let view = SubrecordView::new(&record.subrecords);
+                tx.execute(
+                    "INSERT OR REPLACE INTO waters(id,editor_id,opacity,flags,shallow_color,deep_color,reflection_color,flow_normal_path,data) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    params![
+                        form_id,
+                        view.get_string(b"EDID"),
+                        view.find(b"ANAM").and_then(|bytes| bytes.first()).copied(),
+                        record.flags,
+                        packed_color(view.find(b"NAM0")),
+                        packed_color(view.find(b"NAM1")),
+                        packed_color(view.find(b"NAM2")),
+                        view.get_string(b"DNAM"),
+                        blob,
+                    ],
+                )?;
+            }
+            "TXST" => {
+                let view = SubrecordView::new(&record.subrecords);
+                tx.execute(
+                    "INSERT OR REPLACE INTO texture_sets(id,editor_id,diffuse_path,normal_path,glow_path,height_path,environment_path,mask_path,specular_path,detail_path) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                    params![
+                        form_id,
+                        view.get_string(b"EDID"),
+                        view.get_string(b"TX00"),
+                        view.get_string(b"TX01"),
+                        view.get_string(b"TX02"),
+                        view.get_string(b"TX03"),
+                        view.get_string(b"TX04"),
+                        view.get_string(b"TX05"),
+                        view.get_string(b"TX06"),
+                        view.get_string(b"TX07"),
+                    ],
+                )?;
+            }
+            "LTEX" => {
+                let view = SubrecordView::new(&record.subrecords);
+                let material = view
+                    .find(b"HNAM")
+                    .filter(|bytes| bytes.len() >= 2)
+                    .map(|bytes| {
+                        u16::from_le_bytes(bytes[..2].try_into().expect("two-byte material type"))
+                    });
+                tx.execute(
+                    "INSERT OR REPLACE INTO landscape_textures(id,editor_id,texture_set_id,material_type,friction,restitution) VALUES (?1,?2,?3,?4,?5,?6)",
+                    params![form_id, view.get_string(b"EDID"), view.get_form_id(b"TNAM"), material, Option::<f32>::None, Option::<f32>::None],
+                )?;
+            }
             _ => {}
         }
     }
     tx.commit()
+}
+
+fn packed_color(bytes: Option<&[u8]>) -> Option<u32> {
+    bytes
+        .filter(|bytes| bytes.len() >= 4)
+        .map(|bytes| u32::from_le_bytes(bytes[..4].try_into().expect("four-byte color")))
 }
 
 pub fn insert_reference(
@@ -200,8 +272,12 @@ pub fn insert_reference(
     let base_form_id = view.get_form_id(b"NAME").unwrap_or(0);
     let (grid_x, grid_y, worldspace_id) = cell.unwrap_or((None, None, None));
     let is_exterior = grid_x.is_some() && grid_y.is_some() && worldspace_id.is_some();
-    let local_x = grid_x.map(|grid| pos[0] - (grid as f32 * CELL_SIZE + CELL_SIZE * 0.5));
-    let local_y = grid_y.map(|grid| pos[1] - (grid as f32 * CELL_SIZE + CELL_SIZE * 0.5));
+    // Exterior persistent references are owned by the worldspace's persistent
+    // cell even when their position lies many cells away. Derive local
+    // coordinates from the actual position and keep the R-Tree global so
+    // streaming is spatial rather than tied to the owning CELL record.
+    let local_x = is_exterior.then(|| pos[0] - (pos[0] / CELL_SIZE).floor() * CELL_SIZE);
+    let local_y = is_exterior.then(|| pos[1] - (pos[1] / CELL_SIZE).floor() * CELL_SIZE);
     let blob = serialize_subrecords(subs);
 
     tx.execute(
@@ -210,17 +286,7 @@ pub fn insert_reference(
         params![form_id, cell_id, worldspace_id, base_form_id, is_exterior, pos[0], pos[1], pos[2], local_x, local_y, rot[0], rot[1], rot[2], scale, blob],
     )?;
     if is_exterior {
-        let x = local_x.unwrap();
-        let y = local_y.unwrap();
-        if !(-2048.0..=2048.0).contains(&x) || !(-2048.0..=2048.0).contains(&y) {
-            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("reference {form_id:08X} lies outside cell-local bounds ({x}, {y})"),
-                ),
-            )));
-        }
-        tx.execute("INSERT OR REPLACE INTO exterior_spatial(id, minX, maxX, minY, maxY, minZ, maxZ, cell_id, worldspace_id) VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?4, ?5, ?6)", params![form_id, x, y, pos[2], cell_id, worldspace_id])?;
+        tx.execute("INSERT OR REPLACE INTO exterior_spatial(id, minX, maxX, minY, maxY, minZ, maxZ, cell_id, worldspace_id) VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?4, ?5, ?6)", params![form_id, pos[0], pos[1], pos[2], cell_id, worldspace_id])?;
     }
     Ok(())
 }
@@ -246,6 +312,12 @@ fn insert_cell(tx: &Transaction<'_>, row: CellRow<'_>) -> Result<()> {
 pub fn validate_database(conn: &Connection) -> Result<()> {
     let result: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
     if result != "ok" {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let version: u32 = conn.query_row("SELECT version FROM schema_info LIMIT 1", [], |row| {
+        row.get(0)
+    })?;
+    if version != shared::WORLD_DATABASE_SCHEMA_VERSION {
         return Err(rusqlite::Error::InvalidQuery);
     }
     Ok(())
@@ -282,6 +354,9 @@ mod tests {
             "statics",
             "npcs",
             "scripts",
+            "waters",
+            "texture_sets",
+            "landscape_textures",
         ] {
             let present: i64 = conn
                 .query_row(
@@ -293,5 +368,36 @@ mod tests {
             assert_eq!(present, 1, "missing semantic table {table}");
         }
         validate_database(&conn).unwrap();
+    }
+
+    #[test]
+    fn indexes_persistent_exterior_references_by_global_position() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        let tx = conn.transaction().unwrap();
+        let position = [147_182.05f32, 34_033.137f32, 80.0f32];
+        let mut data = Vec::new();
+        for value in position.into_iter().chain([0.0, 0.0, 0.0]) {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        insert_reference(
+            &tx,
+            0xE7F,
+            1,
+            Some((Some(0), Some(0), Some(0x3C))),
+            &[(b"DATA".to_vec(), data)],
+        )
+        .unwrap();
+        let (x, y, local_x, local_y): (f32, f32, f32, f32) = tx
+            .query_row(
+                "SELECT x.minX,x.minY,r.local_x,r.local_y FROM exterior_spatial x JOIN \"references\" r ON r.id=x.id WHERE x.id=?1",
+                [0xE7Fu32],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert!((x - position[0]).abs() < 0.1);
+        assert!((y - position[1]).abs() < 0.1);
+        assert!((0.0..CELL_SIZE).contains(&local_x));
+        assert!((0.0..CELL_SIZE).contains(&local_y));
     }
 }

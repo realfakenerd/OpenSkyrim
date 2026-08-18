@@ -5,7 +5,9 @@ edition.workspace = true
 
 [dependencies]
 converter = { path = "../converter/" }
+shared = { path = "../shared/" }
 bevy.workspace = true
+serde_json.workspace = true
 crossbeam-channel = "0.5.16"
 tokio.workspace = true
 

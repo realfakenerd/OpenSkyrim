@@ -1,0 +1,54 @@
+name: Phase 2 Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      assets_path:
+        description: Optional local path to legally converted Skyrim assets on the runner
+        required: false
+        default: ""
+      visual_review_path:
+        description: Optional local path to a completed visual-review JSON
+        required: false
+        default: ""
+      quick:
+        description: Run the short plumbing campaign
+        type: boolean
+        required: true
+        default: false
+      require_visual_signoff:
+        description: Reject real-asset acceptance without a completed visual review
+        type: boolean
+        required: true
+        default: false
+
+jobs:
+  acceptance:
+    runs-on: [self-hosted, windows, gpu]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Execute acceptance campaign
+        shell: pwsh
+        env:
+          ACCEPTANCE_ASSETS: ${{ inputs.assets_path }}
+          ACCEPTANCE_VISUAL_REVIEW: ${{ inputs.visual_review_path }}
+          ACCEPTANCE_QUICK: ${{ inputs.quick }}
+          ACCEPTANCE_REQUIRE_VISUAL: ${{ inputs.require_visual_signoff }}
+        run: |
+          $arguments = @()
+          if ($env:ACCEPTANCE_ASSETS) { $arguments += @('-Assets', $env:ACCEPTANCE_ASSETS) }
+          if ($env:ACCEPTANCE_VISUAL_REVIEW) { $arguments += @('-VisualReview', $env:ACCEPTANCE_VISUAL_REVIEW) }
+          if ($env:ACCEPTANCE_QUICK -eq 'true') { $arguments += '-Quick' }
+          if ($env:ACCEPTANCE_REQUIRE_VISUAL -eq 'true') { $arguments += '-RequireVisualSignoff' }
+          ./scripts/phase2-acceptance.ps1 @arguments
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2-acceptance-${{ github.sha }}
+          path: target/acceptance
+          retention-days: 90

@@ -1,0 +1,1 @@
+// Note from current UE 5.7 import: [deathclaw : '', Unknown] The same Joint(s) are used in multiple Skins with multiple different InverseBindMatrix values, which is not supported. Ignoring InverseBindMatrices for the entire Import. Offending Joints' Names: RFOOT.
