@@ -271,7 +271,7 @@ pub fn insert_reference(
         .unwrap_or(1.0);
     let base_form_id = view.get_form_id(b"NAME").unwrap_or(0);
     let (grid_x, grid_y, worldspace_id) = cell.unwrap_or((None, None, None));
-    let is_exterior = grid_x.is_some() && grid_y.is_some() && worldspace_id.is_some();
+    let is_exterior = worldspace_id.is_some() || (grid_x.is_some() && grid_y.is_some());
     // Exterior persistent references are owned by the worldspace's persistent
     // cell even when their position lies many cells away. Derive local
     // coordinates from the actual position and keep the R-Tree global so
@@ -384,7 +384,7 @@ mod tests {
             &tx,
             0xE7F,
             1,
-            Some((Some(0), Some(0), Some(0x3C))),
+            Some((None, None, Some(0x3C))),
             &[(b"DATA".to_vec(), data)],
         )
         .unwrap();
