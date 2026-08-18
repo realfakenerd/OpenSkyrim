@@ -13,7 +13,6 @@ use std::{
 };
 
 const KTX2_IDENTIFIER: &[u8; 12] = b"\xABKTX 20\xBB\r\n\x1A\n";
-const FLAG_THREADED: u32 = 1 << 9;
 const FLAG_KTX2: u32 = 1 << 11;
 const FLAG_SRGB: u32 = 1 << 13;
 const FLAG_GENERATE_MIPS_CLAMP: u32 = 1 << 14;
@@ -139,7 +138,7 @@ fn encode_basis_ktx2(
     BASIS_INIT.call_once(basis_universal::encoder_init);
     ensure!(etc1s_quality > 0, "ETC1S quality must be greater than zero");
     ensure!(uastc_level <= 4, "UASTC level must be between 0 and 4");
-    let mut flags = FLAG_KTX2 | FLAG_THREADED;
+    let mut flags = FLAG_KTX2;
     if generate_mips {
         flags |= FLAG_GENERATE_MIPS_CLAMP;
     }
