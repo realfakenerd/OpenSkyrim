@@ -21,6 +21,7 @@ Thumbs.db
 *.hkx
 *.xwm
 *.fuz
+vendor/project-wormhole-nif/Materials/
 
 openskyrim.cfg
 .env

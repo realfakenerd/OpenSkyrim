@@ -23,7 +23,22 @@ pub fn detect_skyrim_and_start_conversion(
     let conversion_complete = ConversionManifest::load(
         &output_dir.join("conversion-manifest.json"),
     )
-    .is_ok_and(|manifest| manifest.complete && output_dir.join("skyrim_world.db").is_file());
+    .is_ok_and(|manifest| {
+        manifest.complete
+            && manifest.schema_version == converter::cache::CONVERTER_SCHEMA_VERSION
+            && output_dir.join("skyrim_world.db").is_file()
+            && output_dir.join("cell_cache.rkyv").is_file()
+            && std::fs::read(output_dir.join("integration-report.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .is_some_and(|report| {
+                    report.get("passed").and_then(serde_json::Value::as_bool) == Some(true)
+                        && report
+                            .get("schema_version")
+                            .and_then(serde_json::Value::as_u64)
+                            == Some(u64::from(shared::WORLD_DATABASE_SCHEMA_VERSION))
+                })
+    });
 
     if let Some(data_dir) = find_skyrim_data_dir() {
         config.skyrim_data_path = Some(data_dir.clone());
@@ -215,6 +230,38 @@ pub fn handle_mod_drag_and_drop(mut dnd_events: MessageReader<FileDragAndDrop>) 
     for event in dnd_events.read() {
         if let FileDragAndDrop::DroppedFile { path_buf, .. } = event {
             println!("Mod dropped into launcher: {:?}", path_buf);
+        }
+    }
+}
+
+pub fn launch_engine(config: Res<GamePathConfig>, mut status: ResMut<ConversionStatus>) {
+    let executable_name = if cfg!(windows) {
+        "engine.exe"
+    } else {
+        "engine"
+    };
+    let executable = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join(executable_name)))
+        .unwrap_or_else(|| executable_name.into());
+    let assets = config
+        .converted_assets_path
+        .canonicalize()
+        .unwrap_or_else(|_| config.converted_assets_path.clone());
+    match std::process::Command::new(&executable)
+        .arg("--assets")
+        .arg(&assets)
+        .spawn()
+    {
+        Ok(child) => {
+            status.current_step = format!("OpenSkyrim engine started (process {})", child.id());
+        }
+        Err(error) => {
+            status.has_failed = true;
+            status.current_step = format!(
+                "Failed to start engine at {}: {error}",
+                executable.display()
+            );
         }
     }
 }

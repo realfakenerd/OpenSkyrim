@@ -37,7 +37,7 @@ Inspired by project initiatives like OpenMW (OpenMorrowind), OpenSkyrim aims to 
 
 ## 2. Workspace Crate Architecture
 
-To keep compilation fast, binary sizes small, and code ergonomics clean, OpenSkyrim is organized into a **4-crate Cargo Workspace**:
+During Phase 2, OpenSkyrim is organized into a **4-crate Cargo Workspace**. Phase 3 adds the isolated `scripting` crate as a fifth member:
 
 ```
 OpenSkyrim/
@@ -45,7 +45,7 @@ OpenSkyrim/
 ├── crates/
 │   ├── launcher/    # UI App (Setup Wizard, Mod Manager, Launcher)
 │   ├── converter/   # Converter Pipeline (.nif ➔ .glb, .dds ➔ KTX2, .esm ➔ libSQL, .pex ➔ Luau)
-│   ├── scripting/   # Isolated Luau VM (mlua JIT), Native Bindings, Event Bus, Type Definitions Generator (.d.lua)
+│   ├── shared/      # Versioned database/cache contracts shared by converter and engine
 │   └── engine/      # Bevy Game Engine Runtime (Render Pipeline, Physics, Audio, ECS Systems)
 ```
 
@@ -53,7 +53,7 @@ OpenSkyrim/
 | :--------------- | :------------------ | :------------------------------------------------------------------------------------------------------------------------------ |
 | **`launcher`**   | GUI Executable      | First-run setup wizard, game path detection, built-in mod manager UI, triggers converter progress bar, and launches the engine. |
 | **`converter`**  | Library & CLI       | Heavy transformation logic (`mesh_tools`, `basis-universal`, `ddsfile`, `nom` parsers). Invoked directly by `launcher`.         |
-| **`scripting`**  | Library             | Dedicated Luau VM runtime (`mlua` + `luau-jit`), native Rust-to-Luau API bindings, Bevy ECS event bus bridge, and `.d.lua` type definitions generator. |
+| **`shared`**     | Library             | Stable `rkyv` cache structures, schema versions, and converter/runtime data contracts. |
 | **`engine`**     | Game Executable     | Light, hyper-fast game binary (Bevy 0.19+, `wgpu`, `libsql`). Orchestrates transformed game assets and Bevy ECS systems at 60+ FPS.     |
 
 ---
@@ -63,6 +63,7 @@ OpenSkyrim/
 OpenSkyrim prioritizes a modern, developer-friendly modding ecosystem:
 
 - **Isolated Scripting Crate (`crates/scripting`):** Prevents script runtime changes from forcing full game engine recompilations.
+- **Phase boundary:** `crates/scripting` is introduced in Phase 3; the Phase 2 Papyrus compatibility module remains inside `engine` until that migration.
 - **Type Definitions (`.d.lua` / EmmyLua / LuaLS):** Generates static type definitions for IDEs (VS Code, Zed, Neovim, Cursor), providing instant autocompletion, inline API docs, and static type checking.
 - **Luarocks Package Distribution:** Enables distribution of type defs and community mod libraries via standard Lua package management tools.
 

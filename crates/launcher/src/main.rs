@@ -85,5 +85,6 @@ fn main() {
                 handle_mod_drag_and_drop,
             ),
         )
+        .add_systems(OnEnter(LauncherState::LaunchingEngine), launch_engine)
         .run();
 }

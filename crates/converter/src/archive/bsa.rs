@@ -139,18 +139,21 @@ fn decompress(payload: &[u8], version: u32) -> Result<Vec<u8>> {
     let expected = u32_at(payload, 0)? as usize;
     let compressed = &payload[4..];
     let decoded = if version >= 105 {
-        lz4_flex::block::decompress(compressed, expected)
-            .or_else(|_| {
-                let mut output = Vec::with_capacity(expected);
-                ZlibDecoder::new(compressed)
-                    .read_to_end(&mut output)
-                    .map(|_| output)
-                    .map_err(|_| lz4_flex::block::DecompressError::OutputTooSmall {
-                        expected,
-                        actual: 0,
-                    })
-            })
-            .map_err(|error| color_eyre::eyre::eyre!("LZ4/zlib decoding failed: {error}"))?
+        if compressed.starts_with(&[0x04, 0x22, 0x4d, 0x18]) {
+            let mut output = Vec::with_capacity(expected);
+            lz4_flex::frame::FrameDecoder::new(compressed)
+                .read_to_end(&mut output)
+                .wrap_err("LZ4 frame decoding failed")?;
+            output
+        } else if let Ok(output) = lz4_flex::block::decompress(compressed, expected) {
+            output
+        } else {
+            let mut output = Vec::with_capacity(expected);
+            ZlibDecoder::new(compressed)
+                .read_to_end(&mut output)
+                .wrap_err("LZ4 block and zlib decoding failed")?;
+            output
+        }
     } else {
         let mut output = Vec::with_capacity(expected);
         ZlibDecoder::new(compressed).read_to_end(&mut output)?;
@@ -177,6 +180,7 @@ fn u32_at(bytes: &[u8], offset: usize) -> Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn extracts_uncompressed_skyrim_bsa_fixture() {
@@ -211,5 +215,23 @@ mod tests {
             entries,
             vec![("scripts/hello.pex".into(), payload.to_vec())]
         );
+    }
+
+    #[test]
+    fn decompresses_special_edition_lz4_frame() {
+        let source = b"Gamebryo File Format, Version 20.2.0.7\n";
+        let mut compressed = Vec::new();
+        {
+            let mut encoder = lz4_flex::frame::FrameEncoder::new(&mut compressed);
+            encoder.write_all(source).unwrap();
+            encoder.finish().unwrap();
+        }
+        assert_eq!(&compressed[..4], &[0x04, 0x22, 0x4d, 0x18]);
+
+        let mut payload = Vec::with_capacity(4 + compressed.len());
+        payload.extend_from_slice(&(source.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&compressed);
+
+        assert_eq!(decompress(&payload, 105).unwrap(), source);
     }
 }

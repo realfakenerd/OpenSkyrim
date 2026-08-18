@@ -3,6 +3,7 @@ use crate::{
     cache::{CacheEntry, ConversionManifest, configuration_hash, hash_file},
     config::PipelineConfig,
     esm::{EsmParser, cell_cache::write_cell_cache, exporter::validate_database, read_plugins_txt},
+    integration::{IntegrationReport, finalize_world_database},
     mesh::MeshConverter,
     progress::{ProgressEvent, ProgressStage},
     script::ScriptConverter,
@@ -37,6 +38,7 @@ pub struct PipelineReport {
     pub artifacts: Vec<PathBuf>,
     pub inputs_by_kind: BTreeMap<String, u64>,
     pub elapsed_ms: u128,
+    pub integration: Option<IntegrationReport>,
 }
 
 pub struct AssetPipeline;
@@ -219,23 +221,39 @@ impl AssetPipeline {
         }
 
         let vfs_files = discover(&staging.join("vfs"))?;
-        let mut batch = ConversionBatch {
-            config,
-            staging,
-            previous,
-            manifest: &mut manifest,
-            report: &mut report,
-            progress_tx,
-        };
-        batch
-            .convert_kind(&vfs_files, "dds", ProgressStage::Textures)
-            .await?;
-        batch
-            .convert_kind(&vfs_files, "nif", ProgressStage::Meshes)
-            .await?;
-        batch
-            .convert_kind(&vfs_files, "pex", ProgressStage::Scripts)
-            .await?;
+        {
+            let mut batch = ConversionBatch {
+                config,
+                staging,
+                previous,
+                manifest: &mut manifest,
+                report: &mut report,
+                progress_tx,
+            };
+            batch
+                .convert_kind(&vfs_files, "dds", ProgressStage::Textures)
+                .await?;
+            batch
+                .convert_kind(&vfs_files, "nif", ProgressStage::Meshes)
+                .await?;
+            batch
+                .convert_kind(&vfs_files, "pex", ProgressStage::Scripts)
+                .await?;
+        }
+        if let Some(integration) = finalize_world_database(staging)? {
+            if !integration.passed {
+                report.warnings.push(format!(
+                    "asset integration failed: {} missing models, {} invalid models, {} missing textures",
+                    integration.missing_model_count,
+                    integration.invalid_model_count,
+                    integration.missing_texture_count
+                ));
+            }
+            report.integration = Some(integration);
+            report
+                .artifacts
+                .push(PathBuf::from("integration-report.json"));
+        }
         let runtime_path = staging.join("scripts/papyrus_runtime.luau");
         if let Some(parent) = runtime_path.parent() {
             fs::create_dir_all(parent)?;

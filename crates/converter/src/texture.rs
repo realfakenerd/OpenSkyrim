@@ -143,10 +143,12 @@ fn encode_basis_ktx2(
     if generate_mips {
         flags |= FLAG_GENERATE_MIPS_CLAMP;
     }
-    if normal_map {
-        flags |= FLAG_UASTC | u32::from(uastc_level);
-    } else {
-        flags |= FLAG_SRGB | u32::from(etc1s_quality);
+    // Bevy 0.19 can transcode UASTC payloads from KTX2, but its KTX2 loader
+    // explicitly rejects the BasisLZ supercompression used by ETC1S. Keep the
+    // offline/runtime contract compatible by emitting UASTC for every texture.
+    flags |= FLAG_UASTC | u32::from(uastc_level);
+    if !normal_map {
+        flags |= FLAG_SRGB;
     }
     let mut size = 0usize;
     // SAFETY: the encoder copies the complete RGBA slice during this call. The
@@ -164,7 +166,7 @@ fn encode_basis_ktx2(
     Ok(output)
 }
 
-fn validate_ktx2(bytes: &[u8], normal_map: bool) -> Result<()> {
+fn validate_ktx2(bytes: &[u8], _normal_map: bool) -> Result<()> {
     ensure!(
         bytes.starts_with(KTX2_IDENTIFIER),
         "encoder did not produce KTX2"
@@ -175,12 +177,10 @@ fn validate_ktx2(bytes: &[u8], normal_map: bool) -> Result<()> {
         reader.header().pixel_width > 0,
         "KTX2 has invalid dimensions"
     );
-    if !normal_map {
-        ensure!(
-            reader.header().supercompression_scheme == Some(ktx2::SupercompressionScheme::BasisLZ),
-            "ETC1S output is not BasisLZ-supercompressed"
-        );
-    }
+    ensure!(
+        reader.header().supercompression_scheme != Some(ktx2::SupercompressionScheme::BasisLZ),
+        "runtime-incompatible BasisLZ supercompression was emitted"
+    );
     ensure!(
         reader.levels().next().is_some(),
         "KTX2 contains no image levels"
@@ -193,11 +193,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn creates_basis_lz_ktx2() {
+    fn creates_runtime_compatible_color_ktx2() {
         let pixels = [255, 0, 0, 255].repeat(16);
         let bytes = encode_basis_ktx2(4, 4, &pixels, false, false, 192, 2).unwrap();
         validate_ktx2(&bytes, false).unwrap();
-        assert!(bytes.len() < pixels.len() + 256);
+        let reader = ktx2::Reader::new(&bytes).unwrap();
+        assert_ne!(
+            reader.header().supercompression_scheme,
+            Some(ktx2::SupercompressionScheme::BasisLZ)
+        );
     }
 
     #[test]

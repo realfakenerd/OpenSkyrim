@@ -50,7 +50,7 @@ OpenSkyrim/
 OpenSkyrim is being built systematically across 5 core phases. Explore the full roadmap specs in [`docs/roadmap/`](docs/roadmap/README.md).
 
 - [ ] **[Phase 1: Asset Modernization Pipeline (`converter`)](docs/roadmap/01-asset-pipeline.md)** — Transpile legacy `.esm`, `.nif`, `.dds`, and `.pex` into `SQLite 3`, `glTF 2.0`, `KTX2`, and `Luau`.
-- [ ] **[Phase 2: Core Engine Runtime & Vercidium Renderer (`engine`)](docs/roadmap/02-core-engine.md)** — Multi-threaded cell streaming, R-Tree spatial index, zero-copy `rkyv` heightmaps, and GPU instanced indirect draw calls.
+- [ ] **[Phase 2: Core Engine Runtime & Vercidium Renderer (`engine`)](docs/roadmap/02-core-engine.md)** — Runtime, integration, profiling, and acceptance infrastructure implemented; complete real-asset sign-off remains pending.
 - [ ] **[Phase 3: Luau Runtime, Declarative UI & Launcher (`launcher`)](docs/roadmap/03-luau-and-ui.md)** — Sandboxed Luau JIT with async web APIs, Flash-to-Bevy `bsn!` UI conversion, and setup wizard.
 - [ ] **[Phase 4: Gameplay Mechanics, Physics & Persistence](docs/roadmap/04-gameplay-and-physics.md)** — Rapier 3D physics, animation blending, combat state machine, and sub-second save state snapshots.
 - [ ] **[Phase 5: Hardware Ray-Tracing, Multiplatform & Networking](docs/roadmap/05-multiplatform-and-networking.md)** — WebGPU/Vulkan RTGI, DLSS/FSR3 frame gen, native co-op multiplayer, Android ARM64, and OpenXR VR.
