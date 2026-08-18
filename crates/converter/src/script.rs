@@ -1,14 +1,22 @@
 use color_eyre::{
     Result,
-    eyre::{WrapErr, bail, ensure},
+    eyre::{WrapErr, bail, ensure, eyre},
 };
 use memmap2::Mmap;
 use std::{
+    cell::RefCell,
     collections::BTreeSet,
     fmt::Write as _,
     fs::{self, File},
     path::Path,
 };
+
+thread_local! {
+    // One Lua VM per worker thread for syntax and chunk validation
+    static THREAD_LUA: RefCell<mlua::Lua> = RefCell::new(mlua::Lua::new());
+    // Reusable string buffer
+    static THREAD_STRING_BUF: RefCell<String> = RefCell::new(String::with_capacity(32 * 1024));
+}
 
 const SKYRIM_MAGIC: u32 = 0xFA57_C0DE;
 const OPCODE_ARGS: [usize; 36] = [
@@ -131,19 +139,35 @@ impl ScriptConverter {
     pub fn convert_pex_to_luau(input: &Path, output: &Path) -> Result<()> {
         let bytes =
             File::open(input).wrap_err_with(|| format!("failed to open {}", input.display()))?;
+
         let mmap = unsafe { Mmap::map(&bytes) }
             .wrap_err_with(|| format!("failed to memory-map {}", input.display()))?;
+
         let pex = Self::parse(&mmap)?;
         Self::verify(&pex)?;
-        let luau = Self::emit_luau(&pex)?;
-        mlua::Lua::new()
-            .load(&luau)
-            .into_function()
-            .map_err(|error| color_eyre::eyre::eyre!("generated invalid Luau: {error}"))?;
-        if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(output, luau).wrap_err_with(|| format!("failed to write {}", output.display()))
+
+        // Use thread-local reusable scratch string buffer
+        THREAD_STRING_BUF.with(|buf_cell| -> Result<()> {
+            let mut buf = buf_cell.borrow_mut();
+            buf.clear();
+            Self::emit_luau_to(&pex, &mut buf)?;
+
+            THREAD_LUA.with(|lua_cell| {
+                let lua = lua_cell.borrow();
+                lua.load(&*buf)
+                    .set_name(input.to_string_lossy())
+                    .into_function()
+                    .map_err(|err| eyre!("generated invalid Luau: {err}"))?;
+                Ok::<(), color_eyre::Report>(())
+            })?;
+
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(output, buf.as_bytes())
+                .wrap_err_with(|| format!("failed to write {}", output.display()))?;
+            Ok(())
+        })
     }
 
     pub fn parse_header(bytes: &[u8]) -> Result<PexHeader> {
@@ -208,8 +232,14 @@ impl ScriptConverter {
     }
 
     pub fn emit_luau(pex: &PexFile) -> Result<String> {
+        let mut out = String::with_capacity(16 * 1024);
+        Self::emit_luau_to(pex, &mut out)?;
+        Ok(out)
+    }
+
+    pub fn emit_luau_to(pex: &PexFile, out: &mut String) -> Result<()> {
         let object = pex.objects.first().expect("verified object");
-        let mut out = String::new();
+
         writeln!(
             out,
             "-- Generated from {} by OpenSkyrim",
@@ -240,10 +270,15 @@ impl ScriptConverter {
         }
         writeln!(out, "}}")?;
         writeln!(out, "function Script.new(runtime)")?;
-        writeln!(out, "    assert(runtime, \"Papyrus runtime is required\")")?;
         writeln!(
             out,
-            "    local self = setmetatable({{ __runtime = runtime }}, Script)"
+            "    assert(runtime, \"Papyrus runtime is
+          required\")"
+        )?;
+        writeln!(
+            out,
+            "    local self = setmetatable({{ __runtime = runtime }},
+          Script)"
         )?;
         for variable in &object.variables {
             writeln!(
@@ -257,7 +292,7 @@ impl ScriptConverter {
         writeln!(out, "end")?;
         for state in &object.states {
             for function in &state.functions {
-                emit_function(&mut out, state, function)?;
+                emit_function(out, state, function)?;
             }
         }
         for property in &object.properties {
@@ -273,7 +308,8 @@ impl ScriptConverter {
                 if property.writable {
                     writeln!(
                         out,
-                        "Script[{}] = function(self, value) self[{}] = value end",
+                        "Script[{}] = function(self, value) self[{}] = value
+              end",
                         lua_string(&format!("set_{}", property.name)),
                         lua_string(auto_var)
                     )?;
@@ -283,7 +319,7 @@ impl ScriptConverter {
                 let mut named = function.clone();
                 named.name = format!("get_{}", property.name);
                 emit_function(
-                    &mut out,
+                    out,
                     &State {
                         name: String::new(),
                         functions: vec![],
@@ -295,7 +331,7 @@ impl ScriptConverter {
                 let mut named = function.clone();
                 named.name = format!("set_{}", property.name);
                 emit_function(
-                    &mut out,
+                    out,
                     &State {
                         name: String::new(),
                         functions: vec![],
@@ -304,20 +340,8 @@ impl ScriptConverter {
                 )?;
             }
         }
-        writeln!(out, "function Script:dispatch(name, ...)")?;
-        writeln!(out, "    local state = self.__state or Script.__autoState")?;
-        writeln!(
-            out,
-            "    local handler = Script[state .. \"::\" .. name] or Script[name]"
-        )?;
-        writeln!(
-            out,
-            "    assert(handler, \"unknown Papyrus event/function: \" .. name)"
-        )?;
-        writeln!(out, "    return handler(self, ...)")?;
-        writeln!(out, "end")?;
-        writeln!(out, "return Script")?;
-        Ok(out)
+        writeln!(out, "return script")?;
+        Ok(())
     }
 }
 
