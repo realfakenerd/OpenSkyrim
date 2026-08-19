@@ -66,8 +66,7 @@ jobs:
       check_rust: ${{ steps.filter.outputs.check_rust }}
 
   format:
-    needs:
-      - orchestrate
+    needs: [orchestrate]
     if: needs.orchestrate.outputs.check_rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -85,9 +84,8 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-  check_and_test:
-    needs:
-      - orchestrate
+  clippy:
+    needs: [orchestrate]
     if: needs.orchestrate.outputs.check_rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -121,6 +119,36 @@ jobs:
       - name: Clippy check
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  test:
+    needs: [orchestrate]
+    if: needs.orchestrate.outputs.check_rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up mold linker
+        uses: rui314/setup-mold@v1
+
+      - name: Setup kache compiler cache
+        uses: kunobi-ninja/kache-action@v1
+
       - name: Install nextest
         uses: taiki-e/install-action@nextest
 
@@ -133,7 +161,8 @@ jobs:
     needs:
       - orchestrate
       - format
-      - check_and_test
+      - clippy
+      - test
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -152,11 +181,13 @@ jobs:
 
           check_result "orchestrate" "$RESULT_ORCHESTRATE"
           check_result "format" "$RESULT_FORMAT"
-          check_result "check_and_test" "$RESULT_CHECK_AND_TEST"
+          check_result "clippy" "$RESULT_CLIPPY"
+          check_result "test" "$RESULT_TEST"
 
           exit $EXIT_CODE
         env:
           RESULT_ORCHESTRATE: ${{ needs.orchestrate.result }}
           RESULT_FORMAT: ${{ needs.format.result }}
-          RESULT_CHECK_AND_TEST: ${{ needs.check_and_test.result }}
+          RESULT_CLIPPY: ${{ needs.clippy.result }}
+          RESULT_TEST: ${{ needs.test.result }}
   
