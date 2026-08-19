@@ -127,7 +127,7 @@ impl EsmRecord for AchrRecord {
         let patrol_idle = view.get_f32_slice(b"XPRD").and_then(|v| v.first().copied());
 
         let topic_data = view.find(b"PDTO").filter(|d| d.len() >= 8).map(|d| {
-            let topic_type = u32::from_be_bytes([d[0], d[1], d[2], d[3]]);
+            let topic_type = u32::from_le_bytes([d[0], d[1], d[2], d[3]]);
             let data = [d[4], d[5], d[6], d[7]];
             SubrecordPDTO { topic_type, data }
         });
@@ -205,5 +205,31 @@ impl EsmRecord for AchrRecord {
             transform,
             vmad,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_achr_pdto_with_little_endian() {
+        let raw = RawRecord {
+            form_id: 0x00010000,
+            record_type: *b"ACHR",
+            flags: 0,
+            subrecords: vec![
+                (b"NAME".to_vec(), 0x00000007u32.to_le_bytes().to_vec()),
+                (b"PDTO".to_vec(), vec![1, 0, 0, 0, b'T', b'O', b'P', b'I']),
+            ],
+            cell_form_id: None,
+            worldspace_form_id: None,
+            load_order: 0,
+        };
+        let achr = AchrRecord::parse(&raw).unwrap();
+        assert_eq!(achr.base_npc, 7);
+        let pdto = achr.topic_data.unwrap();
+        assert_eq!(pdto.topic_type, 1);
+        assert_eq!(&pdto.data, b"TOPI");
     }
 }
