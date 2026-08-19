@@ -80,6 +80,12 @@ mod tests {
         let index: i64 = find.call((runtime.clone(), values, 20, 0)).unwrap();
         assert_eq!(index, 1);
 
+        let cast: Function = runtime.get("cast").unwrap();
+        let int_val: i64 = cast.call((runtime.clone(), true, "int")).unwrap();
+        assert_eq!(int_val, 1);
+        let float_val: f64 = cast.call((runtime.clone(), true, "float")).unwrap();
+        assert_eq!(float_val, 1.0);
+
         let native = lua
             .create_function(|_, (_target, value): (Table, i64)| Ok(value * 2))
             .unwrap();

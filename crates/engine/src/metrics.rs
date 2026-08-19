@@ -43,7 +43,7 @@ struct BenchmarkSamples {
 struct BenchmarkReport {
     format_version: u32,
     generated_unix_ms: u128,
-    scenario: &'static str,
+    scenario: String,
     frames: usize,
     warmup_frames: u32,
     synthetic_instances: usize,
@@ -156,10 +156,14 @@ fn collect_and_finish(
         generated_unix_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_millis()),
-        scenario: if config.benchmark_only {
-            "synthetic"
+        scenario: if config.profile_scenario.is_empty() {
+            if config.benchmark_only {
+                "synthetic".to_owned()
+            } else {
+                "world".to_owned()
+            }
         } else {
-            "world"
+            config.profile_scenario.clone()
         },
         frames: ordered.len(),
         warmup_frames: config.benchmark_warmup_frames,
