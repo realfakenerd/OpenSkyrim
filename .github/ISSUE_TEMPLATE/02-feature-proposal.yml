@@ -1,53 +1,35 @@
-name: 💡 Feature Proposal
-description: Propose a new feature, architecture enhancement, or new capability.
-title: "[Feature]: "
-labels: ["enhancement", "needs-discussion"]
+name: '💡 Feature Request'
+description: Request a new OpenSkyrim feature or enhancement
+labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for proposing a feature for **OpenSkyrim**! 
-        Before submitting, please review existing specifications in [`docs/specs/`](https://github.com/realfakenerd/OpenSkyrim/tree/main/docs/specs).
-
-  - type: input
-    id: feature-title
+        Thanks for taking the time to request this feature! If your feature request is complex or substantial enough to warrant in-depth architectural discussion, maintainers may ask you to open an issue or RFC discussion.
+  - type: textarea
+    id: problem
     attributes:
-      label: Feature Name / Headline
-      placeholder: e.g., Support multi-threaded mesh loading in engine
+      label: Describe the problem
+      description: Please provide a clear and concise description of the problem this feature would solve. The more information you can provide here, the better.
+      placeholder: I'm always frustrated when...
     validations:
       required: true
-
   - type: textarea
-    id: problem-statement
+    id: solution
     attributes:
-      label: Problem Statement
-      description: Is your feature request related to a problem or limitation? Please describe it clearly.
-      placeholder: e.g., Currently, asset conversion blocks the render thread when entering a new cell...
+      label: Describe the proposed solution
+      description: Please provide a clear and concise description of what you would like to happen.
+      placeholder: I would like to see...
     validations:
       required: true
-
-  - type: textarea
-    id: proposed-solution
+  - type: dropdown
+    id: importance
     attributes:
-      label: Proposed Solution & Architectural Impact
-      description: Describe the solution you'd like to see implemented and how it fits into existing crates (`engine`, `converter`, `launcher`).
-    validations:
-      required: true
-
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives Considered
-      description: Describe any alternative solutions or workarounds you've evaluated.
-    validations:
-      required: false
-
-  - type: checkboxes
-    id: checklist
-    attributes:
-      label: Pre-submission Checklist
+      label: Importance
+      description: How important is this feature to you?
       options:
-        - label: I checked existing issues and discussions to avoid duplicate proposals.
-          required: true
-        - label: This proposal aligns with OpenSkyrim's design goals and technical scope.
-          required: true
+        - nice to have
+        - would make my life easier
+        - i cannot use openskyrim without it
+    validations:
+      required: true
