@@ -1,40 +1,46 @@
-name: ⚡ Performance & Graphics Optimization
-description: Report slow frame rates, stuttering, memory leaks, or rendering bottlenecks.
-title: "[Perf]: "
-labels: ["performance", "graphics"]
+name: '⚡ Performance Issue'
+description: Report slow frame rates, stuttering, high memory, or conversion bottlenecks
+labels: [performance]
 body:
-  - type: input
-    id: area
+  - type: markdown
     attributes:
-      label: Subsystem Bottleneck
-      placeholder: e.g., Shadow mapping, VRAM allocation, BSA decompression
-    validations:
-      required: true
-
-  - type: dropdown
-    id: severity
-    attributes:
-      label: Performance Impact
-      options:
-        - Critical (Unplayable FPS drop or severe stutter)
-        - Major (High VRAM / RAM usage over time)
-        - Minor (Micro-stutters during cell transition)
-        - Informational / Profiling optimization opportunity
-    validations:
-      required: true
-
+      value: |
+        Thanks for reporting a performance issue! Please provide details regarding the bottleneck, hardware specs, and profiling traces if available.
   - type: textarea
-    id: details
+    id: problem
     attributes:
-      label: System & Hardware Details
-      placeholder: CPU model, GPU model, VRAM size, RAM configuration, OS version.
+      label: Describe the performance issue
+      description: What is slow, stuttering, or consuming too much memory/VRAM?
+      placeholder: Frame rate drops to 15 FPS when loading into Whiterun...
     validations:
       required: true
-
   - type: textarea
-    id: profiling-data
+    id: reproduction
     attributes:
-      label: Profiling & Benchmark Data
-      description: Attach trace output, flamegraphs, tracy logs, or frame timings if available.
+      label: Reproduction
+      description: Steps or commands to reproduce the performance bottleneck.
+      placeholder: |
+        1. Run `cargo run -p engine -- --scenario world`
+        2. Walk towards cell (0, 0)...
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware & Environment
+      description: CPU, GPU, VRAM, RAM, and OS details.
+      placeholder: |
+        - CPU: Intel Core i5-1035G1
+        - GPU: NVIDIA RTX 3060 12GB / Integrated
+        - RAM: 16GB
+        - OS: Windows 11 / Linux
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Profiling Traces / Logs / Flamegraphs
+      description: Paste any tracy traces, benchmark output, or logs here.
+      render: shell
     validations:
       required: false

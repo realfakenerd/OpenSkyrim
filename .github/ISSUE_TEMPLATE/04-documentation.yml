@@ -1,20 +1,24 @@
-name: 📝 Documentation & Specification Improvement
-description: Suggest improvements, report broken links, or update specs in docs/.
-title: "[Docs]: "
-labels: ["documentation"]
+name: '📝 Documentation Issue'
+description: Suggest improvements or report errors in documentation or specs
+labels: [documentation]
 body:
-  - type: input
-    id: doc-file
+  - type: markdown
     attributes:
-      label: Target Document / File Path
-      placeholder: e.g., docs/specs/engine_architecture.md or README.md
+      value: |
+        Thanks for helping improve OpenSkyrim's documentation! Please describe what is missing, unclear, or incorrect.
+  - type: textarea
+    id: page
+    attributes:
+      label: Target Page / Document
+      description: What document, README, or spec page is affected?
+      placeholder: docs/specs/converters/pipeline.md
     validations:
       required: true
-
   - type: textarea
     id: description
     attributes:
-      label: Description of Needed Change
-      placeholder: Describe what needs to be added, corrected, or rewritten.
+      label: Description of the change
+      description: Describe what should be added, clarified, or fixed.
+      placeholder: The section on BSA decompression is missing details on...
     validations:
       required: true
