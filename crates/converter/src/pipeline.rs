@@ -558,18 +558,6 @@ fn overlay_loose_assets(data: &Path, vfs: &Path, files: &[PathBuf]) -> Result<()
     Ok(())
 }
 
-fn overlay_directory(source_root: &Path, destination_root: &Path) -> Result<()> {
-    for source in discover(source_root)? {
-        let relative = source.strip_prefix(source_root)?;
-        let destination = destination_root.join(relative);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::copy(source, destination)?;
-    }
-    Ok(())
-}
-
 fn plugin_paths(config: &PipelineConfig, files: &[PathBuf]) -> Result<Vec<PathBuf>> {
     if let Some(path) = &config.plugins_file {
         return read_plugins_txt(path, &config.data_dir);
