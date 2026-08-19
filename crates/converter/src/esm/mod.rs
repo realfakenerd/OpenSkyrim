@@ -149,15 +149,16 @@ fn is_form_id_subrecord(record_type: &[u8; 4], tag: &[u8], len: usize) -> bool {
     match (record_type, tag_4) {
         (b"TES4" | b"CLFM" | b"AACT", _) => false,
         (b"TREE", b"CNAM") => false,
-        (b"TREE", b"SNAM" | b"PFIG") => true,
-        (b"WRLD", b"WNAM" | b"CNAM" | b"RNAM" | b"TNAM") => true,
-        (b"CELL", b"XOWN" | b"XGLB" | b"XEZN" | b"XLCN" | b"XLRL") => true,
-        (b"NPC_", b"RNAM" | b"CNAM" | b"INAM" | b"SNAM") => true,
+        (b"TREE", b"SNAM" | b"PFIG") if len == 4 => true,
+        (b"WRLD", b"WNAM" | b"CNAM" | b"RNAM" | b"TNAM") if len == 4 => true,
+        (b"CELL", b"XOWN" | b"XGLB" | b"XEZN" | b"XLCN" | b"XLRL") if len == 4 => true,
+        (b"NPC_", b"RNAM" | b"CNAM" | b"INAM") if len == 4 => true,
+        (b"NPC_", b"SNAM") if len >= 4 => true,
         (
             b"REFR" | b"ACHR" | b"ACRE" | b"PGRE" | b"PMIS",
             b"NAME" | b"XOWN" | b"XGLB" | b"XEZN" | b"XLCN" | b"XLRL",
-        ) => true,
-        (_, b"XOWN" | b"XGLB" | b"XEZN" | b"XLCN" | b"XLRL") => true,
+        ) if len == 4 => true,
+        (_, b"XOWN" | b"XGLB" | b"XEZN" | b"XLCN" | b"XLRL") if len == 4 => true,
         _ => false,
     }
 }

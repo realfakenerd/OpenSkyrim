@@ -43,9 +43,10 @@ fn is_skyrim_data_dir(data_dir: &Path) -> bool {
             .map(|mut entries| {
                 entries.any(|entry| {
                     entry.ok().is_some_and(|e| {
-                        e.file_name()
-                            .to_string_lossy()
-                            .eq_ignore_ascii_case("skyrim.esm")
+                        e.path().is_file()
+                            && e.file_name()
+                                .to_string_lossy()
+                                .eq_ignore_ascii_case("skyrim.esm")
                     })
                 })
             })
