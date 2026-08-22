@@ -4,7 +4,6 @@ use crate::esm::{
     records::RawRecord,
 };
 use color_eyre::Result;
-use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -22,18 +21,22 @@ pub struct EsmParser;
 
 impl EsmParser {
     /// Parses .esm files and exports world data to skyrim_world.db
-    pub fn convert_plugins(plugin_paths: &[PathBuf], db_path: &Path) -> Result<()> {
-        let conn = Connection::open(db_path)?;
-        create_tables(&conn)?;
+    pub async fn convert_plugins(plugin_paths: &[PathBuf], db_path: &Path) -> Result<()> {
+        let conn = turso::Builder::new_local(&db_path.to_string_lossy())
+            .build()
+            .await?
+            .connect()?;
+        create_tables(&conn).await?;
         for (priority, path) in plugin_paths.iter().enumerate() {
             let checksum = Sha256::digest(std::fs::read(path)?);
             conn.execute(
                 "INSERT OR REPLACE INTO plugins (id, name, priority, checksum) VALUES (?1, ?2, ?3, ?4)",
-                params![priority as i64, path.file_name().unwrap_or_default().to_string_lossy(), priority as i64, checksum.as_slice()],
-            )?;
+                turso::params![priority as i64, path.file_name().unwrap_or_default().to_string_lossy().into_owned(), priority as i64, checksum.as_slice().to_vec()],
+            )
+            .await?;
         }
         let master = Self::merge_plugins(plugin_paths)?;
-        export_to_db(&conn, &master)?;
+        export_to_db(&conn, &master).await?;
 
         Ok(())
     }

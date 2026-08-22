@@ -3,12 +3,13 @@ use crate::esm::{
     extractors::{SubrecordView, extract_cell_info, extract_land_data, serialize_subrecords},
     records::RawRecord,
 };
-use rusqlite::{Connection, Result, Transaction, params};
+use color_eyre::{Result, eyre::eyre};
 use std::{collections::HashMap, str::from_utf8};
+use turso::{Connection, params, transaction::Transaction};
 
 const CELL_SIZE: f32 = 4096.0;
 
-pub fn create_tables(conn: &Connection) -> Result<()> {
+pub async fn create_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"PRAGMA foreign_keys = ON;
          CREATE TABLE IF NOT EXISTS schema_info (version INTEGER NOT NULL);
@@ -38,9 +39,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
              rot_z REAL NOT NULL, scale REAL NOT NULL DEFAULT 1.0, data BLOB
          );
          CREATE INDEX IF NOT EXISTS idx_references_cell ON "references"(cell_id);
-         CREATE VIRTUAL TABLE IF NOT EXISTS exterior_spatial USING rtree(
-             id, minX, maxX, minY, maxY, minZ, maxZ, +cell_id, +worldspace_id
-         );
+         CREATE INDEX IF NOT EXISTS idx_references_exterior_pos ON "references"(worldspace_id, pos_x, pos_y);
          CREATE TABLE IF NOT EXISTS land (
              cell_id INTEGER PRIMARY KEY, heightmap BLOB NOT NULL, vtex BLOB, vclr BLOB, normals BLOB
          );
@@ -85,15 +84,16 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
          );
          CREATE TABLE IF NOT EXISTS conversion_cache (
              plugin_path TEXT PRIMARY KEY, file_hash BLOB NOT NULL, last_converted INTEGER NOT NULL
-         );"#
-    )?;
+         );"#,
+    )
+    .await?;
     Ok(())
 }
 
 type CellMetadata = (Option<i32>, Option<i32>, Option<u32>);
 
-pub fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Result<()> {
-    let tx = conn.unchecked_transaction()?;
+pub async fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Result<()> {
+    let tx = conn.unchecked_transaction().await?;
     let mut cells: HashMap<u32, CellMetadata> = HashMap::new();
 
     for (&form_id, record) in master
@@ -113,7 +113,8 @@ pub fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Resu
                 flags: record.flags,
                 data: &data,
             },
-        )?;
+        )
+        .await?;
         cells.insert(form_id, (grid_x, grid_y, record.worldspace_form_id));
     }
 
@@ -124,24 +125,23 @@ pub fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Resu
         let blob = serialize_subrecords(&record.subrecords);
         tx.execute(
             "INSERT OR REPLACE INTO records(form_id, record_type, cell_id, worldspace_id, load_order, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![form_id, type_str, record.cell_form_id, record.worldspace_form_id, record.load_order, blob],
-        )?;
+            params![form_id, type_str, record.cell_form_id, record.worldspace_form_id, record.load_order, blob.clone()],
+        ).await?;
         tx.execute(
             "INSERT OR REPLACE INTO formid_map(form_id, plugin_name, internal_id, record_type) VALUES (?1, 'merged', ?1, ?2)",
             params![form_id, type_str],
-        )?;
+        ).await?;
 
         let view = SubrecordView::new(&record.subrecords);
         if let Some(vmad_bytes) = view.find(b"VMAD")
             && let Ok((_, vmad)) = parse_vmad(vmad_bytes, &record.record_type)
         {
             for script in vmad.scripts {
-                let properties = serde_json::to_string(&script.properties)
-                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+                let properties = serde_json::to_string(&script.properties)?;
                 tx.execute(
                     "INSERT OR REPLACE INTO scripts(form_id, script_name, vmad, properties_json) VALUES (?1, ?2, ?3, ?4)",
                     params![form_id, script.name, vmad_bytes, properties],
-                )?;
+                ).await?;
             }
         }
 
@@ -154,7 +154,7 @@ pub fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Resu
                 tx.execute(
                     "INSERT OR REPLACE INTO worldspaces(id, editor_id, parent_world, flags) VALUES (?1, ?2, ?3, ?4)",
                     params![form_id, editor_id, view.get_form_id(b"WNAM"), record.flags],
-                )?;
+                ).await?;
             }
             "REFR" | "ACHR" | "ACRE" | "PGRE" | "PMIS" => {
                 let cell_id = record.cell_form_id.unwrap_or(0);
@@ -164,26 +164,27 @@ pub fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Resu
                     cell_id,
                     cells.get(&cell_id).copied(),
                     &record.subrecords,
-                )?;
+                )
+                .await?;
             }
             "LAND" => {
                 let (heightmap, vtex, vclr, normals) = extract_land_data(&record.subrecords);
                 let cell_id = record.cell_form_id.unwrap_or(form_id);
-                tx.execute("INSERT OR REPLACE INTO land(cell_id, heightmap, vtex, vclr, normals) VALUES (?1, ?2, ?3, ?4, ?5)", params![cell_id, heightmap, vtex, vclr, normals])?;
+                tx.execute("INSERT OR REPLACE INTO land(cell_id, heightmap, vtex, vclr, normals) VALUES (?1, ?2, ?3, ?4, ?5)", params![cell_id, heightmap, vtex, vclr, normals]).await?;
             }
             "STAT" | "MSTT" | "FURN" => {
                 let view = SubrecordView::new(&record.subrecords);
                 tx.execute(
                     "INSERT OR REPLACE INTO statics(id, editor_id, model_path, flags) VALUES (?1, ?2, ?3, ?4)",
                     params![form_id, view.get_string(b"EDID"), view.get_string(b"MODL"), record.flags],
-                )?;
+                ).await?;
             }
             "NPC_" => {
                 let view = SubrecordView::new(&record.subrecords);
                 tx.execute(
                     "INSERT OR REPLACE INTO npcs(id, editor_id, full_name, race_id, class_id, flags) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![form_id, view.get_string(b"EDID"), view.get_string(b"FULL"), view.get_form_id(b"RNAM"), view.get_form_id(b"CNAM"), record.flags],
-                )?;
+                ).await?;
             }
             "WATR" => {
                 let view = SubrecordView::new(&record.subrecords);
@@ -200,7 +201,7 @@ pub fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Resu
                         view.get_string(b"DNAM"),
                         blob,
                     ],
-                )?;
+                ).await?;
             }
             "TXST" => {
                 let view = SubrecordView::new(&record.subrecords);
@@ -218,7 +219,7 @@ pub fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Resu
                         view.get_string(b"TX06"),
                         view.get_string(b"TX07"),
                     ],
-                )?;
+                ).await?;
             }
             "LTEX" => {
                 let view = SubrecordView::new(&record.subrecords);
@@ -231,12 +232,13 @@ pub fn export_to_db(conn: &Connection, master: &HashMap<u32, RawRecord>) -> Resu
                 tx.execute(
                     "INSERT OR REPLACE INTO landscape_textures(id,editor_id,texture_set_id,material_type,friction,restitution) VALUES (?1,?2,?3,?4,?5,?6)",
                     params![form_id, view.get_string(b"EDID"), view.get_form_id(b"TNAM"), material, Option::<f32>::None, Option::<f32>::None],
-                )?;
+                ).await?;
             }
             _ => {}
         }
     }
-    tx.commit()
+    tx.commit().await?;
+    Ok(())
 }
 
 fn packed_color(bytes: Option<&[u8]>) -> Option<u32> {
@@ -245,7 +247,7 @@ fn packed_color(bytes: Option<&[u8]>) -> Option<u32> {
         .map(|bytes| u32::from_le_bytes(bytes[..4].try_into().expect("four-byte color")))
 }
 
-pub fn insert_reference(
+pub async fn insert_reference(
     tx: &Transaction<'_>,
     form_id: u32,
     cell_id: u32,
@@ -284,10 +286,7 @@ pub fn insert_reference(
         "INSERT OR REPLACE INTO \"references\"(id, cell_id, worldspace_id, base_form_id, is_exterior, pos_x, pos_y, pos_z, local_x, local_y, rot_x, rot_y, rot_z, scale, data)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![form_id, cell_id, worldspace_id, base_form_id, is_exterior, pos[0], pos[1], pos[2], local_x, local_y, rot[0], rot[1], rot[2], scale, blob],
-    )?;
-    if is_exterior {
-        tx.execute("INSERT OR REPLACE INTO exterior_spatial(id, minX, maxX, minY, maxY, minZ, maxZ, cell_id, worldspace_id) VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?4, ?5, ?6)", params![form_id, pos[0], pos[1], pos[2], cell_id, worldspace_id])?;
-    }
+    ).await?;
     Ok(())
 }
 
@@ -301,24 +300,37 @@ struct CellRow<'a> {
     data: &'a [u8],
 }
 
-fn insert_cell(tx: &Transaction<'_>, row: CellRow<'_>) -> Result<()> {
+async fn insert_cell(tx: &Transaction<'_>, row: CellRow<'_>) -> Result<()> {
     tx.execute(
         "INSERT OR REPLACE INTO cells(id, worldspace_id, grid_x, grid_y, interior_name, flags, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![row.form_id, row.worldspace_id, row.grid_x, row.grid_y, row.interior_name, row.flags, row.data],
-    )?;
+    ).await?;
     Ok(())
 }
 
-pub fn validate_database(conn: &Connection) -> Result<()> {
-    let result: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+pub async fn validate_database(conn: &Connection) -> Result<()> {
+    let mut rows = conn.query("PRAGMA integrity_check", ()).await?;
+    let result: String = rows
+        .next()
+        .await?
+        .ok_or_else(|| eyre!("integrity_check returned no rows"))?
+        .get(0)?;
     if result != "ok" {
-        return Err(rusqlite::Error::InvalidQuery);
+        return Err(eyre!("database integrity check failed: {result}"));
     }
-    let version: u32 = conn.query_row("SELECT version FROM schema_info LIMIT 1", [], |row| {
-        row.get(0)
-    })?;
+    let mut rows = conn
+        .query("SELECT version FROM schema_info LIMIT 1", ())
+        .await?;
+    let version: u32 = rows
+        .next()
+        .await?
+        .ok_or_else(|| eyre!("schema_info table is empty"))?
+        .get(0)?;
     if version != shared::WORLD_DATABASE_SCHEMA_VERSION {
-        return Err(rusqlite::Error::InvalidQuery);
+        return Err(eyre!(
+            "unsupported schema version {version}, expected {}",
+            shared::WORLD_DATABASE_SCHEMA_VERSION
+        ));
     }
     Ok(())
 }
@@ -326,26 +338,46 @@ pub fn validate_database(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use turso::Builder;
 
-    #[test]
-    fn creates_hybrid_spatial_schema() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        let interior_index: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_references_cell'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let exterior_table: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'exterior_spatial'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!((interior_index, exterior_table), (1, 1));
+    async fn open_in_memory() -> Connection {
+        Builder::new_local(":memory:")
+            .build()
+            .await
+            .unwrap()
+            .connect()
+            .unwrap()
+    }
+
+    async fn count(conn: &Connection, sql: &str, params: impl turso::IntoParams) -> i64 {
+        conn.query(sql, params)
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get(0)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn creates_hybrid_spatial_schema() {
+        let conn = open_in_memory().await;
+        create_tables(&conn).await.unwrap();
+        let interior_index = count(
+            &conn,
+            "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_references_cell'",
+            (),
+        )
+        .await;
+        let exterior_index = count(
+            &conn,
+            "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_references_exterior_pos'",
+            (),
+        )
+        .await;
+        assert_eq!((interior_index, exterior_index), (1, 1));
         for table in [
             "worldspaces",
             "cells",
@@ -358,23 +390,22 @@ mod tests {
             "texture_sets",
             "landscape_textures",
         ] {
-            let present: i64 = conn
-                .query_row(
-                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-                    [table],
-                    |row| row.get(0),
-                )
-                .unwrap();
+            let present = count(
+                &conn,
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+            )
+            .await;
             assert_eq!(present, 1, "missing semantic table {table}");
         }
-        validate_database(&conn).unwrap();
+        validate_database(&conn).await.unwrap();
     }
 
-    #[test]
-    fn indexes_persistent_exterior_references_by_global_position() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        let tx = conn.transaction().unwrap();
+    #[tokio::test]
+    async fn indexes_persistent_exterior_references_by_global_position() {
+        let mut conn = open_in_memory().await;
+        create_tables(&conn).await.unwrap();
+        let tx = conn.transaction().await.unwrap();
         let position = [147_182.05f32, 34_033.137f32, 80.0f32];
         let mut data = Vec::new();
         for value in position.into_iter().chain([0.0, 0.0, 0.0]) {
@@ -387,14 +418,25 @@ mod tests {
             Some((None, None, Some(0x3C))),
             &[(b"DATA".to_vec(), data)],
         )
+        .await
         .unwrap();
-        let (x, y, local_x, local_y): (f32, f32, f32, f32) = tx
-            .query_row(
-                "SELECT x.minX,x.minY,r.local_x,r.local_y FROM exterior_spatial x JOIN \"references\" r ON r.id=x.id WHERE x.id=?1",
+        let row = tx
+            .query(
+                "SELECT pos_x,pos_y,local_x,local_y FROM \"references\" WHERE id=?1",
                 [0xE7Fu32],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
             .unwrap();
+        let (x, y, local_x, local_y): (f32, f32, f32, f32) = (
+            row.get::<f64>(0).unwrap() as f32,
+            row.get::<f64>(1).unwrap() as f32,
+            row.get::<f64>(2).unwrap() as f32,
+            row.get::<f64>(3).unwrap() as f32,
+        );
         assert!((x - position[0]).abs() < 0.1);
         assert!((y - position[1]).abs() < 0.1);
         assert!((0.0..CELL_SIZE).contains(&local_x));

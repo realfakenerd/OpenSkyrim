@@ -3,13 +3,13 @@ use color_eyre::{
     eyre::{WrapErr, bail},
 };
 use converter::mesh::MeshConverter;
-use rusqlite::Connection;
 use serde::Serialize;
 use std::{
     collections::HashMap,
     env, fs,
     path::{Component, Path, PathBuf},
 };
+use turso::Builder;
 use walkdir::WalkDir;
 
 #[derive(Debug, Serialize)]
@@ -58,7 +58,8 @@ struct ClosureReport {
     passed: bool,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     color_eyre::install()?;
     let mut args = env::args_os().skip(1);
     let assets_root = args.next().map(PathBuf::from).ok_or_else(|| {
@@ -74,21 +75,36 @@ fn main() -> Result<()> {
         .canonicalize()
         .wrap_err_with(|| format!("assets root does not exist: {}", assets_root.display()))?;
     let database_path = assets_root.join("skyrim_world.db");
-    let connection =
-        Connection::open_with_flags(&database_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .wrap_err_with(|| format!("failed to open {}", database_path.display()))?;
-    let database_schema =
-        connection.query_row("SELECT version FROM schema_info LIMIT 1", [], |row| {
-            row.get::<_, u32>(0)
-        })?;
-    let mut models = connection
-        .prepare(
-            "SELECT DISTINCT model_path FROM statics \
-             WHERE model_path IS NOT NULL AND model_path <> '' \
-             ORDER BY model_path COLLATE NOCASE",
-        )?
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let db = Builder::new_local(&database_path.to_string_lossy())
+        .build()
+        .await
+        .wrap_err_with(|| format!("failed to open {}", database_path.display()))?;
+    let connection = db.connect()?;
+    let database_schema = {
+        let mut rows = connection
+            .query("SELECT version FROM schema_info LIMIT 1", ())
+            .await?;
+        let row = rows
+            .next()
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("schema_info table is empty"))?;
+        row.get::<u32>(0)?
+    };
+    let mut models = {
+        let mut rows = connection
+            .query(
+                "SELECT DISTINCT model_path FROM statics \
+                 WHERE model_path IS NOT NULL AND model_path <> '' \
+                 ORDER BY model_path COLLATE NOCASE",
+                (),
+            )
+            .await?;
+        let mut models = Vec::new();
+        while let Some(row) = rows.next().await? {
+            models.push(row.get::<String>(0)?);
+        }
+        models
+    };
     models.sort_by_key(|model| model.to_ascii_lowercase());
     models.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
 

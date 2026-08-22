@@ -3,7 +3,6 @@ use color_eyre::{
     eyre::{WrapErr, bail},
 };
 use converter::mesh::MeshConverter;
-use rusqlite::Connection;
 use serde::Serialize;
 use std::{
     collections::VecDeque,
@@ -38,7 +37,8 @@ struct ConversionReport {
     results: Vec<ConversionResult>,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     color_eyre::install()?;
     let mut args = env::args_os().skip(1);
     let source_root = required(&mut args, "source-mesh-root")?;
@@ -53,16 +53,25 @@ fn main() -> Result<()> {
     fs::create_dir_all(&assets_root)?;
     let assets_root = assets_root.canonicalize()?;
     let database = assets_root.join("skyrim_world.db");
-    let connection =
-        Connection::open_with_flags(&database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let mut models = connection
-        .prepare(
-            "SELECT DISTINCT model_path FROM statics \
-             WHERE model_path IS NOT NULL AND model_path <> '' \
-             ORDER BY model_path COLLATE NOCASE",
-        )?
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let connection = turso::Builder::new_local(&database.to_string_lossy())
+        .build()
+        .await?
+        .connect()?;
+    let mut models = {
+        let mut rows = connection
+            .query(
+                "SELECT DISTINCT model_path FROM statics \
+                 WHERE model_path IS NOT NULL AND model_path <> '' \
+                 ORDER BY model_path COLLATE NOCASE",
+                (),
+            )
+            .await?;
+        let mut models = Vec::new();
+        while let Some(row) = rows.next().await? {
+            models.push(row.get::<String>(0)?);
+        }
+        models
+    };
     models.sort_by_key(|model| model.to_ascii_lowercase());
     models.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
     let requested = models.len();

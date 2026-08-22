@@ -24,8 +24,8 @@ use bevy::{
 };
 use color_eyre::Result;
 use color_eyre::eyre::WrapErr;
-use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
+use turso::params;
 
 #[derive(Resource)]
 struct InitialCameraGroundHeight(f32);
@@ -248,19 +248,29 @@ fn initial_camera_ground_height(
     database_path: &std::path::Path,
     cache: &CellCache,
 ) -> Result<f32> {
-    let connection = Connection::open(database_path)
-        .wrap_err_with(|| format!("failed to open {}", database_path.display()))?;
-    let cell_id = connection
-        .query_row(
-            "SELECT id FROM cells WHERE worldspace_id=?1 AND grid_x=?2 AND grid_y=?3",
-            params![
-                config.worldspace_id,
-                config.start_grid.0,
-                config.start_grid.1
-            ],
-            |row| row.get::<_, u32>(0),
-        )
-        .optional()?;
+    let cell_id = tokio::runtime::Runtime::new()?.block_on(async {
+        let connection = turso::Builder::new_local(&database_path.to_string_lossy())
+            .build()
+            .await?
+            .connect()
+            .wrap_err_with(|| format!("failed to open {}", database_path.display()))?;
+        let row = connection
+            .query(
+                "SELECT id FROM cells WHERE worldspace_id=?1 AND grid_x=?2 AND grid_y=?3",
+                params![
+                    config.worldspace_id,
+                    config.start_grid.0,
+                    config.start_grid.1
+                ],
+            )
+            .await?
+            .next()
+            .await?;
+        Ok::<Option<u32>, color_eyre::Report>(match row {
+            Some(row) => Some(row.get::<u32>(0)?),
+            None => None,
+        })
+    })?;
     let Some(terrain) = cell_id.and_then(|cell_id| cache.terrain(cell_id)) else {
         return Ok(0.0);
     };
