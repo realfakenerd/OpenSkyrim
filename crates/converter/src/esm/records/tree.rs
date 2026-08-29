@@ -55,7 +55,7 @@ impl EsmRecord for TreeRecord {
         let name = view.get_string(b"FULL");
         let data = view.find(b"CNAM").filter(|d| d.len() >= 48).map(|d| {
             let mut floats = [0.0f32; 12];
-            for (i, chunk) in d.chunks_exact(4).take(12).enumerate() {
+            for (i, chunk) in d.as_chunks::<4>().0.iter().take(12).enumerate() {
                 floats[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             }
 

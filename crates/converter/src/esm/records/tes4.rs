@@ -125,7 +125,7 @@ impl EsmRecord for Tes4Record {
 
         let mut overrides = Vec::new();
         if let Some(onam_raw) = view.find(b"ONAM") {
-            for chunk in onam_raw.chunks_exact(4) {
+            for chunk in onam_raw.as_chunks::<4>().0 {
                 overrides.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
             }
         }
