@@ -75,5 +75,5 @@ Final release verdicts and their evidence package are documented in
 
 ## Compatibility
 
-Phase 2 requires database schema version 3, converter manifest schema 4, and cell cache version 2.
+Phase 2 requires database schema version 3, converter manifest schema 5, and cell cache version 2.
 Older or incomplete assets are rejected and must be reconverted through the launcher or converter CLI.

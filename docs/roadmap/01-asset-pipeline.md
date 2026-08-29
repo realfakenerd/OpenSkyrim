@@ -27,7 +27,7 @@ The Phase 1 implementation is integrated in `crates/converter` and consumed by t
 - Static and skinned NIF geometry is exported to GLB. Diffuse, normal, glow, and specular/environment paths are normalized to the generated KTX2 hierarchy and core glTF metallic-roughness materials.
 - 2D BC1–BC7 DDS textures are decoded and encoded as Basis Universal KTX2. Color textures use ETC1S/BasisLZ and normal maps use UASTC; mip chains are generated when the source declares mipmaps.
 - Skyrim PEX bytecode is parsed, verified, lowered to deterministic Luau state-machine modules, and backed by the sandboxed Papyrus compatibility runtime in `crates/engine`.
-- Conversion work is bounded by `cpu_jobs` and `io_jobs`; cache hits require matching source, configuration, output size, and output SHA-256.
+- Conversion work is bounded by `cpu_jobs` and `io_jobs`; cache hits require matching source, configuration, output size, and output SHA-256. Archive ingestion is cached separately as deduplicated SHA-256 blobs, so unchanged BSA/BA2 files rebuild the VFS without decompression.
 
 DDS volume textures and texture arrays are rejected explicitly because they are outside the Phase 1 Skyrim SE 2D texture contract. Unsupported or corrupt inputs leave the manifest incomplete and make the CLI/launcher report failure instead of silently publishing a successful conversion.
 
@@ -38,6 +38,8 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p converter -- <Skyrim Data> <output> --fail-fast --report-json conversion-report.json
 ```
+
+Use `--invalidate-cache` to force fresh archive extraction and asset conversion. Cache integrity is verified by default; `--no-verify-cache` skips blob hashing when the faster size-only check is acceptable.
 
 ### 1.1 BSA / BA2 Archive Extractor
 
