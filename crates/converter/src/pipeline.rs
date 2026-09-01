@@ -58,8 +58,11 @@ impl AssetPipeline {
             "Discovering Skyrim assets",
         )
         .await;
-        let previous_manifest =
-            ConversionManifest::load(&config.output_dir.join("conversion-manifest.json"))?;
+        let previous_manifest = if config.invalidate_cache {
+            ConversionManifest::default()
+        } else {
+            ConversionManifest::load(&config.output_dir.join("conversion-manifest.json"))?
+        };
         let expected_configuration = configuration_hash(&config)?;
         let previous_manifest = if previous_manifest.configuration_hash == expected_configuration {
             previous_manifest
@@ -114,6 +117,7 @@ impl AssetPipeline {
             configuration_hash: configuration_hash(config)?,
             inputs_by_kind: Default::default(),
             failures: Default::default(),
+            archives: Default::default(),
             entries: Default::default(),
         };
         let files = discover(&config.data_dir)?;
@@ -144,9 +148,26 @@ impl AssetPipeline {
         for (index, archive) in enabled_archives.iter().enumerate() {
             let archive_for_worker = archive.clone();
             let vfs_for_worker = vfs_dir.clone();
+            let previous_cache_root = config.output_dir.join(".ingestion-cache");
+            let cache_root = staging.join(".ingestion-cache");
+            let archive_key = archive
+                .strip_prefix(&config.data_dir)
+                .unwrap_or(archive)
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_ascii_lowercase();
+            let previous_entry = previous.archives.get(&archive_key).cloned();
+            let verify_cache = config.verify_cache;
 
             let result = spawn_blocking(move || {
-                ArchiveExtractor::extract(&archive_for_worker, &vfs_for_worker)
+                ArchiveExtractor::extract_cached(
+                    &archive_for_worker,
+                    &vfs_for_worker,
+                    &previous_cache_root,
+                    &cache_root,
+                    previous_entry.as_ref(),
+                    verify_cache,
+                )
             })
             .await
             .wrap_err("archive worker panicked")?;
@@ -162,8 +183,13 @@ impl AssetPipeline {
             .await;
 
             match result {
-                Ok(entries) => {
-                    report.converted += entries.len() as u64;
+                Ok(outcome) => {
+                    if outcome.cache_hit {
+                        report.cache_hits += outcome.files.len() as u64;
+                    } else {
+                        report.converted += outcome.files.len() as u64;
+                    }
+                    manifest.archives.insert(archive_key, outcome.cache_entry);
                 }
                 Err(error) if !config.fail_fast => {
                     report.skipped += 1;
@@ -725,6 +751,64 @@ mod tests {
                 .unwrap()
                 .complete
         );
+    }
+
+    #[tokio::test]
+    async fn reuses_and_invalidates_archive_ingestion_cache_end_to_end() {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().join("Data");
+        let output = temp.path().join("modern");
+        fs::create_dir_all(&data).unwrap();
+        fs::write(
+            data.join("assets.ba2"),
+            general_ba2_fixture("docs/readme.txt", b"cached asset"),
+        )
+        .unwrap();
+        let config = PipelineConfig::new(&data, &output);
+
+        let first = run_without_progress(config.clone()).await;
+        assert_eq!(first.converted, 1);
+        assert_eq!(first.cache_hits, 0);
+        assert_eq!(
+            fs::read(output.join("vfs/docs/readme.txt")).unwrap(),
+            b"cached asset"
+        );
+
+        let second = run_without_progress(config.clone()).await;
+        assert_eq!(second.converted, 0);
+        assert_eq!(second.cache_hits, 1);
+
+        let mut invalidated = config;
+        invalidated.invalidate_cache = true;
+        let third = run_without_progress(invalidated).await;
+        assert_eq!(third.converted, 1);
+        assert_eq!(third.cache_hits, 0);
+    }
+
+    async fn run_without_progress(config: PipelineConfig) -> PipelineReport {
+        let (tx, mut rx) = mpsc::channel(64);
+        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let report = AssetPipeline::run_async(config, tx).await.unwrap();
+        drain.await.unwrap();
+        report
+    }
+
+    fn general_ba2_fixture(name: &str, payload: &[u8]) -> Vec<u8> {
+        let name = name.as_bytes();
+        let names_offset = 24 + 36;
+        let payload_offset = names_offset + 2 + name.len();
+        let mut bytes = vec![0u8; payload_offset];
+        bytes[..4].copy_from_slice(b"BTDX");
+        bytes[4..8].copy_from_slice(&1u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(b"GNRL");
+        bytes[12..16].copy_from_slice(&1u32.to_le_bytes());
+        bytes[16..24].copy_from_slice(&(names_offset as u64).to_le_bytes());
+        bytes[40..48].copy_from_slice(&(payload_offset as u64).to_le_bytes());
+        bytes[52..56].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        bytes[names_offset..names_offset + 2].copy_from_slice(&(name.len() as u16).to_le_bytes());
+        bytes[names_offset + 2..payload_offset].copy_from_slice(name);
+        bytes.extend_from_slice(payload);
+        bytes
     }
 
     fn minimal_pex(object_name: &str) -> Vec<u8> {

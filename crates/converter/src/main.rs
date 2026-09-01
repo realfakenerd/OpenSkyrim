@@ -14,6 +14,8 @@ struct Cli {
     cpu_jobs: Option<usize>,
     io_jobs: Option<usize>,
     fail_fast: bool,
+    invalidate_cache: bool,
+    verify_cache: bool,
 }
 
 #[tokio::main]
@@ -23,6 +25,8 @@ async fn main() -> Result<()> {
     let cli = parse_cli(std::env::args_os().skip(1).collect())?;
     let mut config = PipelineConfig::new(cli.data, cli.output);
     config.fail_fast = cli.fail_fast;
+    config.invalidate_cache = cli.invalidate_cache;
+    config.verify_cache = cli.verify_cache;
     if let Some(cpu_jobs) = cli.cpu_jobs {
         config.cpu_jobs = cpu_jobs;
     }
@@ -84,6 +88,8 @@ fn parse_cli(args: Vec<OsString>) -> Result<Cli> {
     let mut cpu_jobs = None;
     let mut io_jobs = None;
     let mut fail_fast = false;
+    let mut invalidate_cache = false;
+    let mut verify_cache = true;
     let mut args = args.into_iter();
     while let Some(argument) = args.next() {
         match argument.to_str() {
@@ -103,6 +109,8 @@ fn parse_cli(args: Vec<OsString>) -> Result<Cli> {
                 )?)
             }
             Some("--fail-fast") => fail_fast = true,
+            Some("--invalidate-cache") => invalidate_cache = true,
+            Some("--no-verify-cache") => verify_cache = false,
             Some("--help" | "-h") => bail!(usage()),
             Some(flag) if flag.starts_with('-') => bail!("unknown option {flag}\n{}", usage()),
             _ => positional.push(PathBuf::from(argument)),
@@ -120,6 +128,8 @@ fn parse_cli(args: Vec<OsString>) -> Result<Cli> {
         cpu_jobs,
         io_jobs,
         fail_fast,
+        invalidate_cache,
+        verify_cache,
     })
 }
 
@@ -137,7 +147,7 @@ fn parse_jobs(value: OsString, option: &str) -> Result<usize> {
 }
 
 fn usage() -> &'static str {
-    "usage: converter <Skyrim Data> [output directory] [--cpu-jobs N] [--io-jobs N] [--fail-fast] [--report-json FILE]"
+    "usage: converter <Skyrim Data> [output directory] [--cpu-jobs N] [--io-jobs N] [--fail-fast] [--invalidate-cache] [--no-verify-cache] [--report-json FILE]"
 }
 
 #[cfg(test)]
@@ -155,6 +165,8 @@ mod tests {
                 "--io-jobs",
                 "2",
                 "--fail-fast",
+                "--invalidate-cache",
+                "--no-verify-cache",
                 "--report-json",
                 "report.json",
             ]
@@ -166,6 +178,8 @@ mod tests {
         assert_eq!(cli.cpu_jobs, Some(8));
         assert_eq!(cli.io_jobs, Some(2));
         assert!(cli.fail_fast);
+        assert!(cli.invalidate_cache);
+        assert!(!cli.verify_cache);
         assert_eq!(cli.report_json, Some(PathBuf::from("report.json")));
     }
 }

@@ -8,7 +8,7 @@ use std::{
     path::Path,
 };
 
-pub const CONVERTER_SCHEMA_VERSION: u32 = 4;
+pub const CONVERTER_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CacheEntry {
@@ -16,6 +16,19 @@ pub struct CacheEntry {
     pub output: String,
     pub output_size: u64,
     pub output_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IngestedFile {
+    pub path: String,
+    pub size: u64,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IngestionCacheEntry {
+    pub source_hash: String,
+    pub files: Vec<IngestedFile>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,6 +41,8 @@ pub struct ConversionManifest {
     pub inputs_by_kind: BTreeMap<String, u64>,
     #[serde(default)]
     pub failures: BTreeMap<String, String>,
+    #[serde(default)]
+    pub archives: BTreeMap<String, IngestionCacheEntry>,
     pub entries: BTreeMap<String, CacheEntry>,
 }
 
