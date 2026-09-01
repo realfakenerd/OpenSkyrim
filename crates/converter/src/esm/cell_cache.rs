@@ -116,7 +116,7 @@ fn extract_texture_layers(subrecords: &[(Vec<u8>, Vec<u8>)]) -> Vec<TerrainLayer
             }
             b"VTXT" => {
                 if let Some(index) = active {
-                    for entry in data.chunks_exact(8) {
+                    for entry in data.as_chunks::<8>().0 {
                         layers[index].weights.push(TerrainWeight {
                             vertex: u16::from_le_bytes(entry[..2].try_into().unwrap()),
                             opacity: f32::from_le_bytes(entry[4..8].try_into().unwrap()),

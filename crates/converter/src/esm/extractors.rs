@@ -134,7 +134,9 @@ impl<'a> SubrecordView<'a> {
     /// Read a float vector / transform (e.g. DATA in REFR: 3 pos + 3 rot = 24 bytes)
     pub fn get_f32_slice(&self, target_tag: &[u8; 4]) -> Option<Vec<f32>> {
         self.find(target_tag).map(|d| {
-            d.chunks_exact(4)
+            d.as_chunks::<4>()
+                .0
+                .iter()
                 .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                 .collect()
         })

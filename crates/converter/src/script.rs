@@ -270,15 +270,10 @@ impl ScriptConverter {
         }
         writeln!(out, "}}")?;
         writeln!(out, "function Script.new(runtime)")?;
+        writeln!(out, "    assert(runtime, \"Papyrus runtime is required\")")?;
         writeln!(
             out,
-            "    assert(runtime, \"Papyrus runtime is
-          required\")"
-        )?;
-        writeln!(
-            out,
-            "    local self = setmetatable({{ __runtime = runtime }},
-          Script)"
+            "    local self = setmetatable({{ __runtime = runtime }}, Script)"
         )?;
         for variable in &object.variables {
             writeln!(
@@ -308,8 +303,7 @@ impl ScriptConverter {
                 if property.writable {
                     writeln!(
                         out,
-                        "Script[{}] = function(self, value) self[{}] = value
-              end",
+                        "Script[{}] = function(self, value) self[{}] = value end",
                         lua_string(&format!("set_{}", property.name)),
                         lua_string(auto_var)
                     )?;
@@ -340,7 +334,7 @@ impl ScriptConverter {
                 )?;
             }
         }
-        writeln!(out, "return script")?;
+        writeln!(out, "return Script")?;
         Ok(())
     }
 }
