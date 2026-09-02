@@ -13,7 +13,6 @@ use color_eyre::{
     Result,
     eyre::{WrapErr, bail},
 };
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -218,8 +217,12 @@ impl AssetPipeline {
             )
             .await;
             let db_path = staging.join("skyrim_world.db");
-            EsmParser::convert_plugins(&plugins, &db_path)?;
-            validate_database(&Connection::open(&db_path)?)?;
+            EsmParser::convert_plugins(&plugins, &db_path).await?;
+            let db = turso::Builder::new_local(&db_path.to_string_lossy())
+                .build()
+                .await?
+                .connect()?;
+            validate_database(&db).await?;
             let merged = EsmParser::merge_plugins(&plugins)?;
             write_cell_cache(&merged, &staging.join("cell_cache.rkyv"))?;
             report.artifacts.extend([
@@ -248,7 +251,7 @@ impl AssetPipeline {
                 .convert_kind(&vfs_files, "pex", ProgressStage::Scripts)
                 .await?;
         }
-        if let Some(integration) = finalize_world_database(staging)? {
+        if let Some(integration) = finalize_world_database(staging).await? {
             if !integration.passed {
                 report.warnings.push(format!(
                     "asset integration failed: {} missing models, {} invalid models, {} missing textures",

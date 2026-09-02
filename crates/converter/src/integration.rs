@@ -2,13 +2,13 @@
 
 use crate::mesh::MeshConverter;
 use color_eyre::{Result, eyre::WrapErr};
-use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
+use turso::{Builder, Connection, params};
 use walkdir::WalkDir;
 
 const MAX_REPORTED_ISSUES: usize = 100;
@@ -32,51 +32,57 @@ pub struct IntegrationReport {
     pub passed: bool,
 }
 
-pub fn finalize_world_database(staging: &Path) -> Result<Option<IntegrationReport>> {
+pub async fn finalize_world_database(staging: &Path) -> Result<Option<IntegrationReport>> {
     let database_path = staging.join("skyrim_world.db");
     if !database_path.is_file() {
         return Ok(None);
     }
-    let mut connection = Connection::open(&database_path)?;
+    let mut connection = Builder::new_local(&database_path.to_string_lossy())
+        .build()
+        .await?
+        .connect()?;
     let mut report = IntegrationReport {
-        schema_version: connection.query_row(
-            "SELECT version FROM schema_info LIMIT 1",
-            [],
-            |row| row.get(0),
-        )?,
-        statics_total: count(&connection, "SELECT count(*) FROM statics")?,
+        schema_version: count(&connection, "SELECT version FROM schema_info LIMIT 1").await? as u32,
+        statics_total: count(&connection, "SELECT count(*) FROM statics").await?,
         statics_with_models: count(
             &connection,
             "SELECT count(*) FROM statics WHERE model_path IS NOT NULL AND model_path <> ''",
-        )?,
-        references_total: count(&connection, "SELECT count(*) FROM \"references\"")?,
+        )
+        .await?,
+        references_total: count(&connection, "SELECT count(*) FROM \"references\"").await?,
         exterior_cells: count(
             &connection,
             "SELECT count(*) FROM cells WHERE worldspace_id IS NOT NULL AND grid_x IS NOT NULL AND grid_y IS NOT NULL",
-        )?,
-        terrain_cells: count(&connection, "SELECT count(*) FROM land")?,
+        )
+        .await?,
+        terrain_cells: count(&connection, "SELECT count(*) FROM land").await?,
         texture_sets_with_diffuse: count(
             &connection,
             "SELECT count(*) FROM texture_sets WHERE diffuse_path IS NOT NULL AND diffuse_path <> ''",
-        )?,
+        )
+        .await?,
         waters_with_flow_normal: count(
             &connection,
             "SELECT count(*) FROM waters WHERE flow_normal_path IS NOT NULL AND flow_normal_path <> ''",
-        )?,
+        )
+        .await?,
         ..Default::default()
     };
     let files = converted_file_index(staging)?;
     let static_models = {
-        let mut statement = connection.prepare(
-            "SELECT id,model_path FROM statics WHERE model_path IS NOT NULL AND model_path <> '' ORDER BY id",
-        )?;
-        statement
-            .query_map([], |row| {
-                Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?
+        let mut rows = connection
+            .query(
+                "SELECT id,model_path FROM statics WHERE model_path IS NOT NULL AND model_path <> '' ORDER BY id",
+                (),
+            )
+            .await?;
+        let mut static_models = Vec::new();
+        while let Some(row) = rows.next().await? {
+            static_models.push((row.get::<u32>(0)?, row.get::<String>(1)?));
+        }
+        static_models
     };
-    let transaction = connection.transaction()?;
+    let transaction = connection.transaction().await?;
     for (form_id, model_path) in static_models {
         let key = converted_key(&model_path, "meshes", "glb");
         let Some(path) = files.get(&key) else {
@@ -89,10 +95,20 @@ pub fn finalize_world_database(staging: &Path) -> Result<Option<IntegrationRepor
         };
         match MeshConverter::glb_bounds(path) {
             Ok(bounds) => {
-                transaction.execute(
-                    "UPDATE statics SET bounds_min_x=?1,bounds_min_y=?2,bounds_min_z=?3,bounds_max_x=?4,bounds_max_y=?5,bounds_max_z=?6,bounds_valid=1 WHERE id=?7",
-                    params![bounds.min[0], bounds.min[1], bounds.min[2], bounds.max[0], bounds.max[1], bounds.max[2], form_id],
-                )?;
+                transaction
+                    .execute(
+                        "UPDATE statics SET bounds_min_x=?1,bounds_min_y=?2,bounds_min_z=?3,bounds_max_x=?4,bounds_max_y=?5,bounds_max_z=?6,bounds_valid=1 WHERE id=?7",
+                        params![
+                            bounds.min[0] as f64,
+                            bounds.min[1] as f64,
+                            bounds.min[2] as f64,
+                            bounds.max[0] as f64,
+                            bounds.max[1] as f64,
+                            bounds.max[2] as f64,
+                            form_id
+                        ],
+                    )
+                    .await?;
                 report.bounds_updated += 1;
             }
             Err(error) => {
@@ -104,17 +120,20 @@ pub fn finalize_world_database(staging: &Path) -> Result<Option<IntegrationRepor
             }
         }
     }
-    transaction.commit()?;
+    transaction.commit().await?;
 
     let diffuse_paths = {
-        let mut statement = connection.prepare(
-            "SELECT id,diffuse_path FROM texture_sets WHERE diffuse_path IS NOT NULL AND diffuse_path <> '' ORDER BY id",
-        )?;
-        statement
-            .query_map([], |row| {
-                Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?
+        let mut rows = connection
+            .query(
+                "SELECT id,diffuse_path FROM texture_sets WHERE diffuse_path IS NOT NULL AND diffuse_path <> '' ORDER BY id",
+                (),
+            )
+            .await?;
+        let mut diffuse_paths = Vec::new();
+        while let Some(row) = rows.next().await? {
+            diffuse_paths.push((row.get::<u32>(0)?, row.get::<String>(1)?));
+        }
+        diffuse_paths
     };
     for (form_id, texture_path) in diffuse_paths {
         let key = converted_key(&texture_path, "textures", "ktx2");
@@ -127,14 +146,17 @@ pub fn finalize_world_database(staging: &Path) -> Result<Option<IntegrationRepor
         }
     }
     let flow_paths = {
-        let mut statement = connection.prepare(
-            "SELECT id,flow_normal_path FROM waters WHERE flow_normal_path IS NOT NULL AND flow_normal_path <> '' ORDER BY id",
-        )?;
-        statement
-            .query_map([], |row| {
-                Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?
+        let mut rows = connection
+            .query(
+                "SELECT id,flow_normal_path FROM waters WHERE flow_normal_path IS NOT NULL AND flow_normal_path <> '' ORDER BY id",
+                (),
+            )
+            .await?;
+        let mut flow_paths = Vec::new();
+        while let Some(row) = rows.next().await? {
+            flow_paths.push((row.get::<u32>(0)?, row.get::<String>(1)?));
+        }
+        flow_paths
     };
     for (form_id, texture_path) in flow_paths {
         let key = converted_key(&texture_path, "textures", "ktx2");
@@ -215,8 +237,13 @@ fn normalize(path: &Path) -> String {
         .to_ascii_lowercase()
 }
 
-fn count(connection: &Connection, sql: &str) -> Result<u64> {
-    Ok(connection.query_row(sql, [], |row| row.get(0))?)
+async fn count(connection: &Connection, sql: &str) -> Result<u64> {
+    let mut rows = connection.query(sql, ()).await?;
+    let row = rows
+        .next()
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("query returned no rows: {sql}"))?;
+    Ok(row.get(0)?)
 }
 
 fn issue(report: &mut IntegrationReport, message: String) {
@@ -241,17 +268,25 @@ mod tests {
         );
     }
 
-    #[test]
-    fn enriches_database_with_real_glb_bounds() {
+    #[tokio::test]
+    async fn enriches_database_with_real_glb_bounds() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("skyrim_world.db");
-        let connection = Connection::open(&database).unwrap();
-        crate::esm::exporter::create_tables(&connection).unwrap();
+        let connection = Builder::new_local(&database.to_string_lossy())
+            .build()
+            .await
+            .unwrap()
+            .connect()
+            .unwrap();
+        crate::esm::exporter::create_tables(&connection)
+            .await
+            .unwrap();
         connection
             .execute(
                 "INSERT INTO statics(id,model_path,flags) VALUES(1,'architecture/wall.nif',0)",
-                [],
+                (),
             )
+            .await
             .unwrap();
         drop(connection);
         let mesh_path = directory.path().join("meshes/architecture/wall.glb");
@@ -284,17 +319,34 @@ mod tests {
         )
         .unwrap();
 
-        let report = finalize_world_database(directory.path()).unwrap().unwrap();
+        let report = finalize_world_database(directory.path())
+            .await
+            .unwrap()
+            .unwrap();
         assert!(report.passed);
         assert_eq!(report.bounds_updated, 1);
-        let connection = Connection::open(database).unwrap();
-        let bounds: (f32, f32, i32) = connection
-            .query_row(
-                "SELECT bounds_min_x,bounds_max_z,bounds_valid FROM statics WHERE id=1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
+        let connection = Builder::new_local(&database.to_string_lossy())
+            .build()
+            .await
+            .unwrap()
+            .connect()
             .unwrap();
+        let row = connection
+            .query(
+                "SELECT bounds_min_x,bounds_max_z,bounds_valid FROM statics WHERE id=1",
+                (),
+            )
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap()
+            .unwrap();
+        let bounds: (f32, f32, i32) = (
+            row.get::<f64>(0).unwrap() as f32,
+            row.get::<f64>(1).unwrap() as f32,
+            row.get(2).unwrap(),
+        );
         assert_eq!(bounds, (-2.0, 7.0, 1));
     }
 }
